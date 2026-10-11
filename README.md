@@ -161,6 +161,8 @@ v1.3.5 起，项目把上游依赖升级并固定到 PyPI 的 `wechatauto-replic
 
 v1.4.0 起，导出期间还会临时关闭上游默认的相对路径文件日志，避免在源码目录或 EXE 旁留下 `wechatauto_logs/`。导出结束后会恢复上游进程设置；控制台日志不受影响。
 
+v1.4.0 同时兼容 `wechatauto-replica 1.2.4.4` 在部分中文 Windows + UTF-8 Python 环境下读取 `tasklist` 输出失败的问题：PID 探测在导出沙箱内使用明确的 Windows 编码，并在导出结束后恢复上游方法。
+
 如果你曾单独使用过 `wechatauto-replica`，它自己创建的 `%LOCALAPPDATA%\wechatauto_keys` 可能属于其他程序。本工具既不会自动读取，也不会自动删除那个目录，避免影响其它工具。
 
 GUI 启动和开始新导出时，还会自动检查本项目自己的 `%TEMP%\wechat-chat-export-sensitive\run-*` 残留。新版工作目录带有进程所有权标记：只有确认对应进程已经不存在的目录才会立即自动删除；仍有活动进程的目录会跳过。为兼容此前测试版留下的无标记目录，仅在目录超过 24 小时后自动清理。**自动清理不会触碰旧版共享的 `%TEMP%\wechatauto_db`。**
@@ -342,11 +344,13 @@ SenseVoice 模型不会打进 EXE，只有用户主动开启本地语音转文�
 
 [`fanyuantaier/wechatauto-replica`](https://github.com/fanyuantaier/wechatauto-replica)
 
-当前固定提交：
+当前精确锁定版本：
 
 ```text
-04ef8cbde3862cff90b5f6b42c9ebfcea44ef48d
+wechatauto-replica==1.2.4.4
 ```
+
+依赖升级由 Dependabot 检查，并在 Windows CI 和人工审核通过后再更新。
 
 第三方组件和许可证见 [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md)。
 
@@ -362,7 +366,7 @@ v1.3.4 起，数据库密钥、图片密钥和解密数据库缓存使用一次�
 
 - 只支持 Windows；
 - 当前面向 Windows 微信 4.1.12+；
-- 同名联系人或群聊可能匹配歧义；
+- 单个会话按备注名、昵称或群名查找时，同名对象仍可能匹配歧义；批量导出不依赖显示名区分目录，而使用稳定 `username` 派生目录；
 - 自动探测仍可能选错数据目录，这时可以重新选择或使用 `--db-dir`；
 - 媒体只能导出本机仍有缓存的部分；
 - 部分特殊消息和群成员昵称无法完整还原；
