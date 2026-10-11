@@ -27,7 +27,7 @@ import zstandard as zstd
 from wechatauto import MediaDownloader, WeChatDB
 from PIL import Image, ImageStat
 
-APP_VERSION = "1.3.5"
+APP_VERSION = "1.4.0"
 ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 
 RUST_SILK_URL = (
@@ -60,6 +60,10 @@ SENSITIVE_OWNER_MARKER = ".owner.json"
 UNMARKED_STALE_SECONDS = 24 * 60 * 60
 UPSTREAM_KEYS_ENV = "WECHATAUTO_KEYS_DIR"
 _SENSITIVE_SANDBOX_LOCK = threading.RLock()
+
+
+class EmptyConversationError(ValueError):
+    """A resolved conversation exists, but no local message rows were found."""
 
 
 def sensitive_cache_locations() -> dict[str, str]:
@@ -97,6 +101,95 @@ def _create_sensitive_workdir() -> Path:
     return workdir
 
 
+
+def _suspend_upstream_file_logger():
+    """Temporarily stop wechatauto from writing ./wechatauto_logs."""
+    state = {
+        "param": None,
+        "enabled": None,
+        "handler": None,
+        "handler_attached": False,
+    }
+    try:
+        import logging
+        from wechatauto.param import WxParam
+
+        state["param"] = WxParam
+        state["enabled"] = getattr(WxParam, "ENABLE_FILE_LOGGER", None)
+        if hasattr(WxParam, "ENABLE_FILE_LOGGER"):
+            WxParam.ENABLE_FILE_LOGGER = False
+
+        try:
+            from wechatauto.logger import wxlog
+            handler = getattr(wxlog, "file_handler", None)
+            root = logging.getLogger()
+            if handler is not None and handler in root.handlers:
+                root.removeHandler(handler)
+                state["handler"] = handler
+                state["handler_attached"] = True
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return state
+
+
+def _restore_upstream_file_logger(state):
+    if not state:
+        return
+    try:
+        param = state.get("param")
+        if param is not None and state.get("enabled") is not None:
+            param.ENABLE_FILE_LOGGER = state["enabled"]
+    except Exception:
+        pass
+    if state.get("handler") is not None and state.get("handler_attached"):
+        try:
+            import logging
+            root = logging.getLogger()
+            if state["handler"] not in root.handlers:
+                root.addHandler(state["handler"])
+        except Exception:
+            pass
+
+
+
+def _find_weixin_pids_compat(_db):
+    '''Locale-safe PID lookup for wechatauto-replica 1.2.4.4.
+
+    Upstream 1.2.4.4 lets subprocess choose the text encoding for tasklist.
+    Under UTF-8 mode on Chinese Windows that can fail in the reader thread
+    and leave stdout as None. Later upstream versions fixed this by decoding
+    tasklist explicitly as GBK. Keep the same narrow workaround scoped to
+    the export sandbox.
+    '''
+    try:
+        result = subprocess.run(
+            [
+                "tasklist",
+                "/FI",
+                "IMAGENAME eq Weixin.exe",
+                "/FO",
+                "CSV",
+                "/NH",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="gbk",
+            errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except OSError:
+        return []
+
+    pids = []
+    for line in (result.stdout or "").strip().splitlines():
+        parts = line.strip('"').split('","')
+        if len(parts) >= 2 and parts[1].isdigit():
+            pids.append(int(parts[1]))
+    return pids
+
+
 @contextmanager
 def _upstream_sensitive_sandbox(workdir: Path):
     # Keep wechatauto 1.2.4.4 key caches inside the current run-* directory.
@@ -112,16 +205,35 @@ def _upstream_sensitive_sandbox(workdir: Path):
         had_env = UPSTREAM_KEYS_ENV in os.environ
         old_env = os.environ.get(UPSTREAM_KEYS_ENV)
         old_tempdir = tempfile.tempdir
+        upstream_logger_state = _suspend_upstream_file_logger()
+
+        # Scoped compatibility fix for wechatauto-replica 1.2.4.4:
+        # its tasklist subprocess can decode with UTF-8 on Chinese Windows.
+        old_pid_finder = getattr(WeChatDB, "_find_weixin_pids", None)
+        pid_finder_patched = False
+        if callable(old_pid_finder):
+            try:
+                WeChatDB._find_weixin_pids = _find_weixin_pids_compat
+                pid_finder_patched = True
+            except Exception:
+                pass
+
         os.environ[UPSTREAM_KEYS_ENV] = str(stable_keys)
         tempfile.tempdir = str(upstream_temp)
         try:
             yield
         finally:
             tempfile.tempdir = old_tempdir
+            if pid_finder_patched:
+                try:
+                    WeChatDB._find_weixin_pids = old_pid_finder
+                except Exception:
+                    pass
             if had_env:
                 os.environ[UPSTREAM_KEYS_ENV] = old_env or ""
             else:
                 os.environ.pop(UPSTREAM_KEYS_ENV, None)
+            _restore_upstream_file_logger(upstream_logger_state)
 
 
 def _pid_is_alive(pid) -> bool:
@@ -2413,7 +2525,7 @@ def _write_markdown(parsed: list[dict], path: Path, is_group: bool, target_name:
 
 
 def _export_chat_impl(
-    keyword: str,
+    keyword: str | None = None,
     out_root="exports",
     progress=None,
     export_images=False,
@@ -2423,6 +2535,10 @@ def _export_chat_impl(
     transcribe_voices=False,
     db_dir=None,
     workdir=None,
+    db=None,
+    contact=None,
+    folder_name=None,
+    index_cache=None,
 ):
     def log(msg):
         if progress:
@@ -2431,31 +2547,44 @@ def _export_chat_impl(
     if transcribe_voices:
         export_voices = True
 
-    if db_dir:
-        db_dir = resolve_db_dir(db_dir)
-        log(f"正在连接微信本地数据库…（指定目录：{db_dir}）")
-    else:
-        log("正在连接微信本地数据库…")
+    if db is None:
+        if db_dir:
+            db_dir = resolve_db_dir(db_dir)
+            log(f"正在连接微信本地数据库…（指定目录：{db_dir}）")
+        else:
+            log("正在连接微信本地数据库…")
+        db = WeChatDB(db_dir=db_dir, workdir=workdir)
 
-    db = WeChatDB(db_dir=db_dir, workdir=workdir)
-    target = find_contact(db, keyword)
-    username = target["username"]
-    target_name = target.get("remark") or target.get("nick_name") or keyword
+    if contact is not None:
+        username = contact["username"]
+        target_name = contact.get("name") or username
+    elif keyword:
+        target = find_contact(db, keyword)
+        username = target["username"]
+        target_name = target.get("remark") or target.get("nick_name") or keyword
+    else:
+        raise ValueError("必须提供会话关键词或已解析的联系人。")
     is_group = username.endswith("@chatroom")
     log(f"已识别：{'群聊' if is_group else '私聊'} · {target_name}")
     log("正在读取消息…")
     rows = load_rows(db, username)
     if not rows:
-        raise ValueError("没有读取到该会话的消息。")
+        raise EmptyConversationError("没有读取到该会话的消息。")
 
     out_root = Path(out_root)
-    chat_dir = out_root / safe_folder_name(target_name)
+    chat_dir = out_root / safe_folder_name(folder_name or target_name)
     chat_dir.mkdir(parents=True, exist_ok=True)
-    self_info = db.get_self_info()
-    # get_self_info already uses the dependency's account-directory normalization.
-    # Compare its stable username exactly; never strip suffixes from message IDs.
-    self_username = _identity_username(self_info.get("username"))
-    nicks = db._nickname_index()
+
+    cache = index_cache if index_cache is not None else {}
+    if "identity_bundle" in cache:
+        self_username, nicks = cache["identity_bundle"]
+    else:
+        self_info = db.get_self_info()
+        # get_self_info already uses the dependency's account-directory normalization.
+        # Compare its stable username exactly; never strip suffixes from message IDs.
+        self_username = _identity_username(self_info.get("username"))
+        nicks = db._nickname_index()
+        cache["identity_bundle"] = (self_username, nicks)
     parsed = []
     type_counts = {}
     sender_counts = Counter()
@@ -2528,7 +2657,11 @@ def _export_chat_impl(
     }
 
     if export_images or export_files or export_voices or export_videos:
-        md = MediaDownloader(db)
+        if "media_downloader" in cache:
+            md = cache["media_downloader"]
+        else:
+            md = MediaDownloader(db)
+            cache["media_downloader"] = md
         image_rows_exist = export_images and any(low_type(r.get("local_type")) == 3 for r in rows)
         file_rows_exist = export_files and any(
             low_type(r.get("local_type")) == 49 and parse_content(r.get("local_type"), r.get("message_content"), r.get("compress_content")).startswith("[文件]")
@@ -2545,8 +2678,13 @@ def _export_chat_impl(
         if image_rows_exist:
             log("正在定位本机图片缓存…")
             image_index = _index_image_files(db, username)
-            log("正在准备图片解密配置…")
-            cfg_dword, cfg_error = _ensure_cfg_dword(db)
+            if "cfg_probe" in cache:
+                cfg_dword, cfg_error = cache["cfg_probe"]
+                log("复用已探测的图片解密配置。")
+            else:
+                log("正在准备图片解密配置…")
+                cfg_dword, cfg_error = _ensure_cfg_dword(db)
+                cache["cfg_probe"] = (cfg_dword, cfg_error)
             if cfg_dword:
                 try:
                     md._cfg_dword = cfg_dword
@@ -2556,13 +2694,23 @@ def _export_chat_impl(
             elif cfg_error:
                 log(f"图片解密配置暂未获取：{cfg_error}")
             if image_index:
-                image_keys = _detect_image_keys_fast(md)
-                log("图片解密密钥已就绪。" if image_keys else "未获取到图片解密密钥；将优先回退导出微信明文缩略图。")
+                if "image_keys" in cache:
+                    image_keys = cache["image_keys"]
+                    log("复用已探测的图片解密密钥。")
+                else:
+                    image_keys = _detect_image_keys_fast(md)
+                    cache["image_keys"] = image_keys
+                    log("图片解密密钥已就绪。" if image_keys else "未获取到图片解密密钥；将优先回退导出微信明文缩略图。")
 
         if file_rows_exist:
-            log("正在索引本机文件缓存…")
-            file_index = _index_local_files(db)
-            log(f"已索引本机文件缓存：{file_index.get('count', 0)} 个文件。")
+            if "file_index" in cache:
+                file_index = cache["file_index"]
+                log(f"复用已索引的本机文件缓存：{file_index.get('count', 0)} 个文件。")
+            else:
+                log("正在索引本机文件缓存…")
+                file_index = _index_local_files(db)
+                cache["file_index"] = file_index
+                log(f"已索引本机文件缓存：{file_index.get('count', 0)} 个文件。")
 
         if video_rows_exist:
             log("正在索引本机视频缓存…")
@@ -2584,10 +2732,19 @@ def _export_chat_impl(
                     reason
                     + "。请先安装本地语音识别模型后重新导出。"
                 )
-            log("正在加载 SenseVoice 本地语音识别模型（CPU，4 线程）…")
-            asr_recognizer = _create_local_asr_recognizer()
-            asr_cache_path, asr_cache = _load_asr_cache(Path(out_root))
-            log("本地语音识别已就绪。")
+            if "asr_bundle" in cache:
+                asr_recognizer, asr_cache_path, asr_cache = cache["asr_bundle"]
+                log("复用已加载的 SenseVoice 本地语音识别模型。")
+            else:
+                log("正在加载 SenseVoice 本地语音识别模型（CPU，4 线程）…")
+                asr_recognizer = _create_local_asr_recognizer()
+                asr_cache_path, asr_cache = _load_asr_cache(Path(out_root))
+                cache["asr_bundle"] = (
+                    asr_recognizer,
+                    asr_cache_path,
+                    asr_cache,
+                )
+                log("本地语音识别已就绪。")
 
         image_dir = chat_dir / "media" / "images"
         file_dir = chat_dir / "media" / "files"
@@ -2783,6 +2940,449 @@ def _export_chat_impl(
         "md": str(md_path.resolve()),
         "json": str(json_path.resolve()),
     }
+
+# System/service identities that are not ordinary private/group chats.
+_BATCH_SPECIAL_EXACT = frozenset({
+    "filehelper", "fmessage", "floatbottle", "medianote", "newsapp",
+    "weixin", "weixinreminder", "notifymessage", "qqmail", "tmessage",
+    "qmessage", "mphelper", "weibo", "weixinloglevel",
+    "brandservicesessionholder", "brandsessionholder",
+})
+_BATCH_SPECIAL_PREFIXES = ("gh_",)
+_BATCH_MSG_TABLE_RE = re.compile(r"^Msg_([0-9a-fA-F]{32})$")
+
+
+def _stable_batch_folder(username: str) -> str:
+    """Folder identity depends only on stable username, never display order/name."""
+    value = _identity_username(username)
+    if value is None:
+        raise ValueError("批量导出的会话 username 无效。")
+    base = safe_folder_name(value)
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:10]
+    stem = base[: max(1, 96 - len(digest))]
+    return safe_folder_name(f"{stem} [{digest}]")
+
+
+def _batch_message_hashes(db) -> set[str]:
+    hashes = set()
+    for rel in db._message_dbs():
+        conn = db._open(rel)
+        try:
+            rows = conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name LIKE 'Msg_%'"
+            )
+            for row in rows:
+                name = row[0]
+                if not isinstance(name, str):
+                    continue
+                match = _BATCH_MSG_TABLE_RE.fullmatch(name)
+                if match:
+                    hashes.add(match.group(1).casefold())
+        finally:
+            conn.close()
+    return hashes
+
+
+def _batch_chat_candidates(db, progress=None):
+    """Resolve actual local message tables to stable private/group usernames."""
+    def log(message):
+        if progress:
+            progress(message)
+
+    names = {}
+    last_times = {}
+    md5_to_username = {}
+
+    try:
+        nicks = db._nickname_index() or {}
+    except Exception:
+        nicks = {}
+
+    def add_username(raw_username, display=None, last_time=None):
+        username = _identity_username(raw_username)
+        if username is None:
+            return
+        md5hex = hashlib.md5(username.encode("utf-8")).hexdigest()
+        md5_to_username.setdefault(md5hex, username)
+        if display:
+            names.setdefault(username, str(display).strip())
+        else:
+            names.setdefault(username, nicks.get(username) or "")
+        if last_time not in (None, ""):
+            try:
+                last_times[username] = int(last_time)
+            except (TypeError, ValueError):
+                pass
+
+    for username, display in nicks.items():
+        add_username(username, display)
+
+    # Scan only the exact upstream contact/session tables, not arbitrary tables
+    # containing a generic "username" column.
+    for item in getattr(db, "_db_files", []) or []:
+        if len(item) < 2:
+            continue
+        rel, path = item[0], item[1]
+        basename = Path(str(path)).name.casefold()
+        if basename not in {"contact.db", "session.db"}:
+            continue
+        try:
+            conn = db._open(rel)
+        except Exception:
+            continue
+        try:
+            if basename == "contact.db":
+                try:
+                    rows = conn.execute(
+                        "SELECT username, nick_name, remark FROM contact"
+                    )
+                    for username, nick_name, remark in rows:
+                        add_username(
+                            username,
+                            remark or nick_name or nicks.get(username) or "",
+                        )
+                except Exception:
+                    pass
+            else:
+                try:
+                    rows = conn.execute(
+                        "SELECT username, last_timestamp "
+                        "FROM SessionTable WHERE is_hidden=0"
+                    )
+                    for username, last_timestamp in rows:
+                        add_username(
+                            username,
+                            nicks.get(username) or "",
+                            last_timestamp,
+                        )
+                except Exception:
+                    pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    hashes = _batch_message_hashes(db)
+
+    self_username = None
+    try:
+        self_username = _identity_username(
+            (db.get_self_info() or {}).get("username")
+        )
+    except Exception:
+        pass
+
+    chats = []
+    unresolved = 0
+    for md5hex in hashes:
+        username = md5_to_username.get(md5hex)
+        if not username:
+            unresolved += 1
+            continue
+        low = username.casefold()
+        if username == self_username:
+            continue
+        if low in _BATCH_SPECIAL_EXACT or low.startswith(_BATCH_SPECIAL_PREFIXES):
+            continue
+        chats.append({
+            "username": username,
+            "name": names.get(username) or nicks.get(username) or username,
+            "is_group": low.endswith("@chatroom"),
+            "last_time": last_times.get(username),
+        })
+
+    def priority(item):
+        value = item.get("last_time")
+        known = value if isinstance(value, int) and value > 0 else 0
+        return (
+            0 if known else 1,
+            -known,
+            item["is_group"],
+            item["name"].casefold(),
+            item["username"],
+        )
+
+    chats.sort(key=priority)
+    if unresolved:
+        log(
+            f"有 {unresolved} 个本地消息表无法从 contact/session 数据可靠反查 username，"
+            "已跳过而不是猜测会话身份。"
+        )
+    return chats, unresolved
+
+
+def _batch_time_text(value) -> str:
+    if value in (None, ""):
+        return ""
+    return fmt_time(value)
+
+
+def _write_all_chats_index(out_root: Path, chats: list[dict], meta: dict):
+    out_root = Path(out_root)
+    json_path = out_root / "all_chats_index.json"
+    md_path = out_root / "all_chats_index.md"
+
+    with json_path.open("w", encoding="utf-8-sig") as f:
+        json.dump(
+            {"exporter_version": APP_VERSION, **meta, "chats": chats},
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    lines = [
+        "# 全部聊天导出索引",
+        "",
+        f"- 导出器版本：{APP_VERSION}",
+        f"- 生成时间：{meta['generated_at']}",
+        f"- 可可靠识别的本地会话：{meta['discovered_total']}",
+        f"- 无法可靠反查身份的消息表：{meta['unresolved_message_tables']}",
+        f"- 本次处理：{meta['selected_total']}",
+        f"- 成功：{meta['exported']}；无消息：{meta['skipped_empty']}；失败：{meta['failed']}",
+        f"- 消息总数：{meta['total_messages']}",
+        "",
+    ]
+    if meta.get("limited"):
+        lines.extend([
+            f"- 本次使用 `--limit`，仅处理最近的 {meta['selected_total']} 个会话。",
+            "",
+        ])
+    lines.extend([
+        "| 会话 | 类型 | 最近消息 | 消息数 | 状态 / 文件夹 |",
+        "| --- | --- | --- | ---: | --- |",
+    ])
+
+    for item in chats:
+        label = str(item.get("name") or item["username"]).replace("|", "\\|")
+        if item["status"] == "exported":
+            href = _markdown_href(item["folder"])
+            status = f"[{item['folder']}]({href})"
+        elif item["status"] == "skipped_empty":
+            status = "无消息"
+        else:
+            error = str(item.get("error") or "未知错误").replace("|", "\\|")
+            status = f"失败：{error}"
+        lines.append(
+            f"| {label} | {'群聊' if item['is_group'] else '私聊'} "
+            f"| {item.get('last_time_text') or '—'} "
+            f"| {item.get('message_count', 0)} | {status} |"
+        )
+    lines.append("")
+
+    with md_path.open("w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(lines))
+    return json_path, md_path
+
+
+def _export_all_chats_impl(
+    out_root="exports",
+    progress=None,
+    export_images=False,
+    export_files=False,
+    export_voices=False,
+    export_videos=False,
+    transcribe_voices=False,
+    db_dir=None,
+    workdir=None,
+    limit=None,
+):
+    def log(message):
+        if progress:
+            progress(message)
+
+    if transcribe_voices:
+        export_voices = True
+
+    if db_dir:
+        db_dir = resolve_db_dir(db_dir)
+        log(f"正在连接微信本地数据库…（指定目录：{db_dir}）")
+    else:
+        log("正在连接微信本地数据库…")
+
+    db = WeChatDB(db_dir=db_dir, workdir=str(workdir) if workdir else None)
+    log("正在枚举本机实际存在消息记录的私聊和群聊…")
+    chats, unresolved = _batch_chat_candidates(db, progress=progress)
+    if not chats:
+        extra = (
+            f"；另有 {unresolved} 个消息表无法可靠反查会话身份"
+            if unresolved
+            else ""
+        )
+        raise ValueError(
+            "没有发现可可靠识别并导出的本地私聊或群聊" + extra + "。"
+        )
+
+    discovered_total = len(chats)
+    if limit is not None:
+        chats = chats[:limit]
+    limited = len(chats) < discovered_total
+
+    if limited:
+        log(f"已按数量上限只处理最近的 {len(chats)} 个会话。")
+    else:
+        log(f"共发现 {discovered_total} 个可可靠识别的本地会话。")
+
+    out_root = Path(out_root)
+    out_root.mkdir(parents=True, exist_ok=True)
+    index_cache = {}
+    results = []
+    exported = skipped_empty = failed = total_messages = 0
+
+    for position, contact in enumerate(chats, 1):
+        name = contact.get("name") or contact["username"]
+        folder = _stable_batch_folder(contact["username"])
+        entry = {
+            "name": name,
+            "username": contact["username"],
+            "is_group": bool(contact["is_group"]),
+            "last_time": contact.get("last_time"),
+            "last_time_text": _batch_time_text(contact.get("last_time")),
+            "folder": folder,
+            "status": "failed",
+            "message_count": 0,
+            "output_dir": None,
+            "txt": None,
+            "md": None,
+            "json": None,
+            "media_stats": None,
+            "sender_resolution_counts": None,
+            "error": None,
+        }
+        kind = "群聊" if entry["is_group"] else "私聊"
+        log(f"[{position}/{len(chats)}] {kind}：{name}")
+
+        try:
+            result = _export_chat_impl(
+                out_root=out_root,
+                progress=progress,
+                export_images=export_images,
+                export_files=export_files,
+                export_voices=export_voices,
+                export_videos=export_videos,
+                transcribe_voices=transcribe_voices,
+                db=db,
+                contact=contact,
+                folder_name=folder,
+                index_cache=index_cache,
+            )
+        except EmptyConversationError as exc:
+            entry["status"] = "skipped_empty"
+            entry["error"] = str(exc)
+            skipped_empty += 1
+            log(f"该会话没有可读取的本地消息，已跳过：{name}")
+        except Exception as exc:
+            entry["status"] = "failed"
+            entry["error"] = f"{type(exc).__name__}: {exc}"
+            failed += 1
+            log(f"该会话导出失败，继续下一个：{entry['error']}")
+        else:
+            entry.update({
+                "status": "exported",
+                "message_count": result["message_count"],
+                "output_dir": result["output_dir"],
+                "txt": result["txt"],
+                "md": result["md"],
+                "json": result["json"],
+                "media_stats": result["media_stats"],
+                "sender_resolution_counts": result["sender_resolution_counts"],
+            })
+            exported += 1
+            total_messages += result["message_count"]
+
+        results.append(entry)
+
+    meta = {
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "discovered_total": discovered_total,
+        "unresolved_message_tables": unresolved,
+        "selected_total": len(chats),
+        "limited": limited,
+        "exported": exported,
+        "skipped_empty": skipped_empty,
+        "failed": failed,
+        "total_messages": total_messages,
+        "export_images": bool(export_images),
+        "export_files": bool(export_files),
+        "export_voices": bool(export_voices),
+        "export_videos": bool(export_videos),
+        "transcribe_voices": bool(transcribe_voices),
+    }
+    index_json, index_md = _write_all_chats_index(out_root, results, meta)
+    log(
+        f"全部完成：成功 {exported}、无消息 {skipped_empty}、失败 {failed}；"
+        f"共 {total_messages} 条消息。"
+    )
+    log(f"总索引：{index_md}")
+
+    return {
+        **meta,
+        "output_dir": str(out_root.resolve()),
+        "index_json": str(index_json.resolve()),
+        "index_md": str(index_md.resolve()),
+        "chats": results,
+    }
+
+
+def export_all_chats(
+    out_root="exports",
+    progress=None,
+    export_images=False,
+    export_files=False,
+    export_voices=False,
+    export_videos=False,
+    transcribe_voices=False,
+    db_dir=None,
+    limit=None,
+):
+    """Export all reliably identified local private/group conversations."""
+    if limit is not None:
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            raise ValueError("会话数量上限（limit）必须是正整数。")
+        if limit <= 0:
+            raise ValueError("会话数量上限（limit）必须是正整数。")
+
+    stale_report = clear_current_sensitive_cache()
+    if progress and stale_report.get("removed"):
+        progress(
+            f"已自动清理 {len(stale_report['removed'])} 个上次异常退出留下的敏感临时目录。"
+        )
+
+    workdir = _create_sensitive_workdir()
+    if progress:
+        progress("敏感数据库密钥和解密缓存将使用一次性临时目录，导出结束后自动清理。")
+
+    result = None
+    try:
+        with _upstream_sensitive_sandbox(workdir):
+            result = _export_all_chats_impl(
+                out_root=out_root,
+                progress=progress,
+                export_images=export_images,
+                export_files=export_files,
+                export_voices=export_voices,
+                export_videos=export_videos,
+                transcribe_voices=transcribe_voices,
+                db_dir=db_dir,
+                workdir=str(workdir),
+                limit=limit,
+            )
+    except BaseException:
+        _cleanup_sensitive_workdir(workdir, progress=progress)
+        raise
+
+    cleanup_ok, cleanup_error = _cleanup_sensitive_workdir(
+        workdir,
+        progress=progress,
+    )
+    result["sensitive_cache_cleanup"] = cleanup_ok
+    result["sensitive_cache_cleanup_error"] = cleanup_error
+    return result
+
+
 def export_chat(
     keyword: str,
     out_root="exports",

@@ -1,7 +1,13 @@
 # -*- coding: utf-8 -*-
 import argparse
 
-from exporter_core import clear_sensitive_cache, export_chat, install_local_asr_model, install_rust_silk
+from exporter_core import (
+    clear_sensitive_cache,
+    export_all_chats,
+    export_chat,
+    install_local_asr_model,
+    install_rust_silk,
+)
 
 
 if __name__ == "__main__":
@@ -31,6 +37,21 @@ if __name__ == "__main__":
         help="同时开启图片、文件、语音和视频导出",
     )
     p.add_argument(
+        "--all",
+        dest="export_all",
+        action="store_true",
+        help=(
+            "导出本机所有能够从本地消息表可靠识别的私聊和群聊，"
+            "并生成 all_chats_index.json / all_chats_index.md 总索引"
+        ),
+    )
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="配合 --all 使用：只导出最近的 N 个会话，便于先小范围试跑",
+    )
+    p.add_argument(
         "--install-asr",
         action="store_true",
         help="下载安装本地 SenseVoice 语音识别模型后退出",
@@ -58,6 +79,11 @@ if __name__ == "__main__":
     )
     a = p.parse_args()
 
+    if a.limit is not None and a.limit <= 0:
+        p.error("--limit 必须是正整数。")
+    if a.limit is not None and not a.export_all:
+        p.error("--limit 只能配合 --all 使用。")
+
     if a.install_asr:
         install_local_asr_model(progress=print)
         raise SystemExit(0)
@@ -81,9 +107,44 @@ if __name__ == "__main__":
                 )
             raise SystemExit(1)
         raise SystemExit(0)
+    if a.export_all:
+        if a.name:
+            print(f"注意：已指定 --all，忽略会话关键词“{a.name}”。")
+        result = export_all_chats(
+            a.out,
+            progress=print,
+            export_images=(a.images or a.media),
+            export_files=(a.files or a.media),
+            export_voices=(a.voices or a.media or a.transcribe_voices),
+            export_videos=(a.videos or a.media),
+            transcribe_voices=a.transcribe_voices,
+            db_dir=a.db_dir,
+            limit=a.limit,
+        )
+        print(
+            f"可可靠识别会话 {result['discovered_total']}，"
+            f"本次处理 {result['selected_total']}；"
+            f"成功 {result['exported']}，无消息 {result['skipped_empty']}，"
+            f"失败 {result['failed']}，消息总数 {result['total_messages']}。"
+        )
+        if result.get("unresolved_message_tables"):
+            print(
+                f"另有 {result['unresolved_message_tables']} 个消息表无法可靠反查身份，"
+                "已跳过而不是猜测。"
+            )
+        print("输出目录：" + result["output_dir"])
+        print("总索引：" + result["index_md"])
+        if not result["sensitive_cache_cleanup"]:
+            print(
+                "敏感临时缓存自动清理失败："
+                + str(result.get("sensitive_cache_cleanup_error"))
+            )
+            raise SystemExit(1)
+        raise SystemExit(1 if result["failed"] else 0)
+
     if not a.name:
         p.error(
-            "请提供好友备注/昵称或群名；"
+            "请提供好友备注/昵称或群名；或用 --all 导出全部聊天；"
             "或使用 --install-asr / --install-rust-silk / "
             "--clear-sensitive-cache"
         )
