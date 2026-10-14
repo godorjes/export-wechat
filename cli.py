@@ -2,6 +2,7 @@
 import argparse
 import json
 import signal
+import sys
 
 from exporter_core import (
     clear_sensitive_cache,
@@ -13,6 +14,11 @@ from exporter_core import (
 
 
 if __name__ == "__main__":
+    # Redirected streams on English Windows may default to a legacy code page.
+    # JSON and Chinese diagnostics use the same explicit UTF-8 contract.
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='replace')
     p = argparse.ArgumentParser(description="微信聊天信息导出给大模型")
     p.add_argument("name", nargs="?", help="好友备注/昵称或群名")
     p.add_argument("--out", default="exports")
