@@ -740,13 +740,29 @@ def _json_message_id(value):
     return value
 
 
-def load_rows(db: WeChatDB, username: str):
+def _check_cancel(cancel_token):
+    if cancel_token is not None:
+        cancel_token.check()
+
+
+def _normalize_formats(formats=None):
+    if formats is None:
+        return frozenset({"txt", "md", "json"})
+    values = (formats,) if isinstance(formats, str) else formats
+    selected = frozenset(str(v).lower() for v in values)
+    if not selected or not selected <= {"txt", "md", "json"}:
+        raise ValueError("请至少选择一种有效格式：txt、md、json。")
+    return selected
+
+
+def load_rows(db: WeChatDB, username: str, cancel_token=None):
     """跨全部 message_*.db 读取，保留来源库，避免只命中第一个分片。"""
     md5hex = hashlib.md5(username.encode("utf-8")).hexdigest()
     table = "Msg_" + md5hex
     rows = []
 
     for rel in db._message_dbs():
+        _check_cancel(cancel_token)
         conn = db._open(rel)
         try:
             exists = conn.execute(
@@ -768,7 +784,8 @@ def load_rows(db: WeChatDB, username: str):
                 "SELECT " + ", ".join(select_cols) + f" FROM {table}"
             )
             names = [d[0] for d in cur.description]
-            for raw in cur.fetchall():
+            for raw in cur:
+                _check_cancel(cancel_token)
                 item = dict(zip(names, raw))
                 for c in wanted:
                     item.setdefault(c, None)
@@ -2451,7 +2468,7 @@ def _relativize_media(chat_dir: Path, media: dict):
     return media
 
 
-def _write_txt(parsed: list[dict], path: Path, is_group: bool, target_name: str):
+def _write_txt(parsed: list[dict], path: Path, is_group: bool, target_name: str, cancel_token=None):
     with path.open("w", encoding="utf-8-sig", newline="\n") as f:
         f.write(f"WeChat Chat Export for LLM v{APP_VERSION}\n")
         f.write(f"会话类型：{'群聊' if is_group else '私聊'}\n")
@@ -2460,6 +2477,7 @@ def _write_txt(parsed: list[dict], path: Path, is_group: bool, target_name: str)
         f.write("=" * 70 + "\n\n")
         last_date = None
         for m in parsed:
+            _check_cancel(cancel_token)
             date = m["time"][:10] if len(m["time"]) >= 10 else ""
             if date and date != last_date:
                 if last_date is not None:
@@ -2481,7 +2499,7 @@ def _md_message_content(content: str) -> str:
     return (content or "").replace("\n", "  \n")
 
 
-def _write_markdown(parsed: list[dict], path: Path, is_group: bool, target_name: str):
+def _write_markdown(parsed: list[dict], path: Path, is_group: bool, target_name: str, cancel_token=None):
     with path.open("w", encoding="utf-8", newline="\n") as f:
         f.write(f"# {target_name}\n\n")
         f.write(f"- 导出器：WeChat Chat Export for LLM v{APP_VERSION}\n")
@@ -2489,6 +2507,7 @@ def _write_markdown(parsed: list[dict], path: Path, is_group: bool, target_name:
         f.write(f"- 消息总数：{len(parsed)}\n\n")
         last_date = None
         for m in parsed:
+            _check_cancel(cancel_token)
             date = m["time"][:10] if len(m["time"]) >= 10 else ""
             time_only = m["time"][11:19] if len(m["time"]) >= 19 else m["time"]
             if date and date != last_date:
@@ -2539,7 +2558,17 @@ def _export_chat_impl(
     contact=None,
     folder_name=None,
     index_cache=None,
+    formats=None,
+    cancel_token=None,
+    event=None,
 ):
+    formats = _normalize_formats(formats)
+
+    def stage(name, current=0, total=0):
+        if event:
+            event({"stage": name, "current": current, "total": total})
+        _check_cancel(cancel_token)
+
     def log(msg):
         if progress:
             progress(msg)
@@ -2567,7 +2596,9 @@ def _export_chat_impl(
     is_group = username.endswith("@chatroom")
     log(f"已识别：{'群聊' if is_group else '私聊'} · {target_name}")
     log("正在读取消息…")
-    rows = load_rows(db, username)
+    stage("读取消息")
+    rows = (load_rows(db, username, cancel_token=cancel_token)
+            if cancel_token is not None else load_rows(db, username))
     if not rows:
         raise EmptyConversationError("没有读取到该会话的消息。")
 
@@ -2590,6 +2621,7 @@ def _export_chat_impl(
     sender_counts = Counter()
 
     for idx, row in enumerate(rows, 1):
+        _check_cancel(cancel_token)
         raw_type = row.get("local_type")
         t = low_type(raw_type)
         type_counts[str(t)] = type_counts.get(str(t), 0) + 1
@@ -2618,6 +2650,8 @@ def _export_chat_impl(
         })
         if progress and idx % 2000 == 0:
             log(f"已处理 {idx}/{len(rows)} 条消息…")
+        if idx % 2000 == 0:
+            stage("解析消息", idx, len(rows))
 
     if self_username is None:
         log("发送者身份警告：未能确认本机账号 username，无法判断“我”；未使用昵称或数字 ID 猜测。")
@@ -2657,6 +2691,7 @@ def _export_chat_impl(
     }
 
     if export_images or export_files or export_voices or export_videos:
+        stage("处理附件", 0, len(rows))
         if "media_downloader" in cache:
             md = cache["media_downloader"]
         else:
@@ -2752,6 +2787,7 @@ def _export_chat_impl(
         video_dir = chat_dir / "media" / "videos"
 
         for idx, (row, msg) in enumerate(zip(rows, parsed), 1):
+            _check_cancel(cancel_token)
             t = low_type(row.get("local_type"))
             if export_images and t == 3:
                 media_stats["images_requested"] += 1
@@ -2883,10 +2919,16 @@ def _export_chat_impl(
     txt_path = chat_dir / "chat_full_for_llm.txt"
     md_path = chat_dir / "chat_full_for_llm.md"
     json_path = chat_dir / "chat_full_parsed.json"
-    _write_txt(parsed, txt_path, is_group, target_name)
-    _write_markdown(parsed, md_path, is_group, target_name)
-    with json_path.open("w", encoding="utf-8-sig") as f:
-        json.dump({
+    stage("写出文件", len(parsed), len(parsed))
+    if "txt" in formats:
+        _write_txt(parsed, txt_path, is_group, target_name, cancel_token=cancel_token)
+    _check_cancel(cancel_token)
+    if "md" in formats:
+        _write_markdown(parsed, md_path, is_group, target_name, cancel_token=cancel_token)
+    _check_cancel(cancel_token)
+    if "json" in formats:
+        with json_path.open("w", encoding="utf-8-sig") as f:
+            data = {
             "exporter_version": APP_VERSION,
             "chat_type": "group" if is_group else "private",
             "chat_name": target_name,
@@ -2895,7 +2937,11 @@ def _export_chat_impl(
             "sender_resolution_counts": dict(sender_counts),
             "media_stats": media_stats,
             "messages": parsed,
-        }, f, ensure_ascii=False, indent=2)
+            }
+            for chunk in json.JSONEncoder(ensure_ascii=False, indent=2).iterencode(data):
+                _check_cancel(cancel_token)
+                f.write(chunk)
+    _check_cancel(cancel_token)
 
     log(f"完成：{len(parsed)} 条消息")
     summaries = [
@@ -2936,9 +2982,9 @@ def _export_chat_impl(
         "sender_resolution_counts": dict(sender_counts),
         "media_stats": media_stats,
         "output_dir": str(chat_dir.resolve()),
-        "txt": str(txt_path.resolve()),
-        "md": str(md_path.resolve()),
-        "json": str(json_path.resolve()),
+        "txt": str(txt_path.resolve()) if "txt" in formats else None,
+        "md": str(md_path.resolve()) if "md" in formats else None,
+        "json": str(json_path.resolve()) if "json" in formats else None,
     }
 
 # System/service identities that are not ordinary private/group chats.
@@ -2991,6 +3037,7 @@ def _batch_chat_candidates(db, progress=None):
             progress(message)
 
     names = {}
+    contact_metadata = {}
     last_times = {}
     md5_to_username = {}
 
@@ -3038,6 +3085,10 @@ def _batch_chat_candidates(db, progress=None):
                         "SELECT username, nick_name, remark FROM contact"
                     )
                     for username, nick_name, remark in rows:
+                        contact_metadata[username] = {
+                            "nick_name": str(nick_name or ""),
+                            "remark": str(remark or ""),
+                        }
                         add_username(
                             username,
                             remark or nick_name or nicks.get(username) or "",
@@ -3091,6 +3142,7 @@ def _batch_chat_candidates(db, progress=None):
             "name": names.get(username) or nicks.get(username) or username,
             "is_group": low.endswith("@chatroom"),
             "last_time": last_times.get(username),
+            **contact_metadata.get(username, {}),
         })
 
     def priority(item):
