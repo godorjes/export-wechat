@@ -776,4 +776,8 @@ class App(tk.Tk):
 
 
 if __name__ == "__main__":
-    App().mainloop()
+    if "--legacy" in sys.argv:
+        App().mainloop()
+    else:
+        from ui.main_window import App as SelectionApp
+        SelectionApp(app_directory=app_dir(), icon=WINDOW_ICON_PNG_BASE64).mainloop()

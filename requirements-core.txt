@@ -1,0 +1,5 @@
+zstandard
+Pillow
+psutil
+imageio-ffmpeg
+wechatauto-replica==1.2.4.4

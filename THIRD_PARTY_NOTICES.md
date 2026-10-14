@@ -1,5 +1,14 @@
 # Third-Party Notices
 
+## wechat-chat-export (upstream application)
+
+Repository: https://github.com/zhuzhangxue/wechat-chat-export
+Baseline: v1.4.0, commit `2c49469a91e2f3b0c73a581e15a8ad2db25b7923`.
+License: Apache License 2.0. Original license and attribution are retained.
+This derivative adds V1.0 metadata selection, task management and native UI.
+The core package omits the optional sherpa-onnx and soundfile ASR runtime;
+the full package retains it. FFmpeg and rust-silk remain bundled in both.
+
 ## wechatauto-replica
 
 Repository: https://github.com/fanyuantaier/wechatauto-replica

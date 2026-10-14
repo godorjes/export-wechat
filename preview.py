@@ -15,6 +15,7 @@ class ChatPreview(tk.Toplevel):
 
     def __init__(self, parent, json_path):
         super().__init__(parent)
+        self._scheduled = set()
         self.title("聊天预览")
         self.geometry("920x720")
         self.minsize(720, 520)
@@ -26,6 +27,7 @@ class ChatPreview(tk.Toplevel):
 
         self.chat_name = data.get("chat_name") or self.chat_dir.name
         self.messages = data.get("messages") or []
+        self.end_index = len(self.messages)
         self.start_index = max(0, len(self.messages) - self.PAGE_SIZE)
 
         # Thumbnail cache avoids decoding the same image again when loading older pages.
@@ -55,6 +57,9 @@ class ChatPreview(tk.Toplevel):
             command=self._load_older,
         )
         self.load_btn.pack(side="left", padx=(0, 12))
+
+        self.newer_btn = ttk.Button(controls, text="较新消息", command=self._load_newer)
+        self.newer_btn.pack(side="left", padx=(0, 12))
 
         self.count_label = ttk.Label(controls, text="")
         self.count_label.pack(side="left")
@@ -95,7 +100,20 @@ class ChatPreview(tk.Toplevel):
 
         self.protocol("WM_DELETE_WINDOW", self._close)
         self._render()
-        self.after(80, lambda: self.text.yview_moveto(1.0))
+        self._later(80, lambda: self.text.yview_moveto(1.0))
+
+    def _later(self, delay, callback):
+        def run():
+            self._scheduled.discard(token)
+            callback()
+        token = self.after(delay, run)
+        self._scheduled.add(token)
+
+    def destroy(self):
+        for token in self._scheduled:
+            self.after_cancel(token)
+        self._scheduled.clear()
+        super().destroy()
 
     def _configure_tags(self):
         self.text.tag_configure(
@@ -111,6 +129,7 @@ class ChatPreview(tk.Toplevel):
             spacing1=10,
             spacing3=3,
         )
+        self.text.tag_configure("sender_self", foreground="#087D39", font=("Microsoft YaHei UI", 10, "bold"), spacing1=10, spacing3=3)
         self.text.tag_configure(
             "content",
             font=("Microsoft YaHei UI", 10),
@@ -139,12 +158,16 @@ class ChatPreview(tk.Toplevel):
         # Rebuilding a Text document is cheap even for hundreds/thousands of
         # normal text messages, unlike rebuilding thousands of nested widgets.
         self._set_editable(True)
+        for widget in self.embedded_widgets:
+            widget.destroy()
+        self.image_cache.clear()
         self.text.delete("1.0", "end")
         self.embedded_widgets.clear()
         self.separator_widgets.clear()
 
-        shown = len(self.messages) - self.start_index
-        self.count_label.configure(text=f"显示 {shown}/{len(self.messages)} 条")
+        shown = self.end_index - self.start_index
+        self.count_label.configure(text=f"{self.start_index + 1 if shown else 0}–{self.end_index} / {len(self.messages)} 条")
+        self.newer_btn.configure(state="normal" if self.end_index < len(self.messages) else "disabled")
 
         remaining = self.start_index
         if remaining > 0:
@@ -160,7 +183,7 @@ class ChatPreview(tk.Toplevel):
             )
 
         last_date = None
-        for msg in self.messages[self.start_index:]:
+        for msg in self.messages[self.start_index:self.end_index]:
             time_text = str(msg.get("time") or "")
             date = time_text[:10] if len(time_text) >= 10 else ""
             if date and date != last_date:
@@ -171,27 +194,41 @@ class ChatPreview(tk.Toplevel):
             self._render_message(msg)
 
         self._set_editable(False)
+        self._later(0, self._resize_separators)
 
     def _load_older(self):
         if self.start_index <= 0:
             return
+        self.end_index = self.start_index
         self.start_index = max(0, self.start_index - self.PAGE_SIZE)
         self._render()
         # New page starts at the top so the newly loaded older messages are visible.
-        self.after_idle(lambda: self.text.yview_moveto(0.0))
+        self._later(0, lambda: self.text.yview_moveto(0.0))
+
+    def _load_newer(self):
+        if self.end_index >= len(self.messages):
+            return
+        self.start_index = self.end_index
+        self.end_index = min(len(self.messages), self.start_index + self.PAGE_SIZE)
+        self._render()
 
     def _render_message(self, msg):
         time_text = str(msg.get("time") or "")
         time_only = time_text[11:19] if len(time_text) >= 19 else time_text
         sender = msg.get("sender") or "未知"
 
+        start = self.text.index("end-1c")
         self.text.insert("end", f"{time_only} | {sender}\n", "sender")
+        if msg.get("is_self") is True:
+            self.text.tag_add("sender_self", start, "end-1c")
 
         content = str(msg.get("content") or "")
         if content and content not in {"[图片]", "[语音]", "[视频]"}:
             self.text.insert("end", content.rstrip() + "\n", "content")
 
         media = msg.get("media") or {}
+        if media and not media.get("available"):
+            self.text.insert("end", f"[附件不可用：{media.get('reason') or '本机缓存缺失'}]\n", "content")
         if media.get("available") and media.get("path"):
             full = self.chat_dir / Path(media["path"])
             kind = media.get("kind")
@@ -243,7 +280,6 @@ class ChatPreview(tk.Toplevel):
         self.embedded_widgets.append(line)
         self.text.window_create("end", window=line, padx=0, pady=0)
         self.text.insert("end", "\n\n")
-        self.after_idle(self._resize_separators)
 
     def _resize_separators(self, _event=None):
         if not self.separator_widgets:
@@ -313,3 +349,96 @@ def open_chat_preview(parent, json_path):
         messagebox.showwarning("聊天预览", "没有找到导出的 JSON。", parent=parent)
         return None
     return ChatPreview(parent, path)
+
+
+class TextPageReader:
+    """Read bounded pages; text/Markdown preview does not require extra JSON."""
+    def __init__(self, path, page_size=300):
+        self.file = Path(path).open('r', encoding='utf-8-sig', errors='replace')
+        self.page_size = page_size
+        self.offsets = [0]
+        self.page = -1
+        self.eof = False
+
+    def _read(self, index):
+        self.file.seek(self.offsets[index])
+        lines = []
+        for _ in range(self.page_size):
+            # Bound exceptionally long message lines too.
+            line = self.file.readline(16384)
+            if not line:
+                break
+            lines.append(line)
+        next_offset = self.file.tell()
+        if len(self.offsets) == index + 1:
+            self.offsets.append(next_offset)
+        self.page = index
+        self.eof = not self.file.read(1)
+        self.file.seek(next_offset)
+        return lines
+
+    def next_page(self):
+        if self.eof and self.page >= 0:
+            return []
+        return self._read(self.page + 1)
+
+    def previous_page(self):
+        return self._read(max(0, self.page - 1))
+
+    def close(self):
+        self.file.close()
+
+
+class TextPreview(tk.Toplevel):
+    def __init__(self, parent, path):
+        super().__init__(parent)
+        self.title('聊天记录预览 · ' + Path(path).parent.name)
+        self.geometry('920x720')
+        self.reader = TextPageReader(path)
+        self.rowconfigure(1, weight=1)
+        self.columnconfigure(0, weight=1)
+        controls = ttk.Frame(self, padding=12)
+        controls.grid(row=0, column=0, sticky='ew')
+        self.prev = ttk.Button(controls, text='上一页', command=lambda: self.render(self.reader.previous_page()))
+        self.prev.pack(side='left')
+        self.next = ttk.Button(controls, text='下一页', command=lambda: self.render(self.reader.next_page()))
+        self.next.pack(side='left', padx=8)
+        self.page_label = ttk.Label(controls)
+        self.page_label.pack(side='left')
+        body = ttk.Frame(self)
+        body.grid(row=1, column=0, sticky='nsew')
+        body.rowconfigure(0, weight=1)
+        body.columnconfigure(0, weight=1)
+        self.text = tk.Text(body, wrap='word', padx=18, pady=12, font=('Microsoft YaHei UI', 10))
+        self.text.grid(row=0, column=0, sticky='nsew')
+        scroll = ttk.Scrollbar(body, command=self.text.yview)
+        scroll.grid(row=0, column=1, sticky='ns')
+        self.text.configure(yscrollcommand=scroll.set)
+        self.protocol('WM_DELETE_WINDOW', self.close)
+        self.render(self.reader.next_page())
+
+    def render(self, lines):
+        self.text.configure(state='normal')
+        self.text.delete('1.0', 'end')
+        self.text.insert('end', ''.join(lines))
+        self.text.configure(state='disabled')
+        self.page_label.configure(text=f'第 {self.reader.page + 1} 页')
+        self.prev.configure(state='normal' if self.reader.page else 'disabled')
+        self.next.configure(state='disabled' if self.reader.eof else 'normal')
+
+    def close(self):
+        self.reader.close()
+        self.destroy()
+
+
+def open_export_preview(parent, folder):
+    folder = Path(folder)
+    try:
+        if (folder / 'chat_full_parsed.json').is_file():
+            return open_chat_preview(parent, folder / 'chat_full_parsed.json')
+        for name in ('chat_full_for_llm.txt', 'chat_full_for_llm.md'):
+            if (folder / name).is_file():
+                return TextPreview(parent, folder / name)
+        messagebox.showwarning('聊天预览', '没有找到已导出的聊天记录。', parent=parent)
+    except (OSError, ValueError, TypeError):
+        messagebox.showerror('聊天预览', '记录无法读取或格式不支持。', parent=parent)

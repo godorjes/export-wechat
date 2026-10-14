@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import argparse
+import json
+import signal
 
 from exporter_core import (
     clear_sensitive_cache,
@@ -77,7 +79,42 @@ if __name__ == "__main__":
             "默认自动探测；数据目录被自行迁移过、或自动探测读到错误副本时指定。"
         ),
     )
+    p.add_argument('--list-chats', action='store_true', help='列出有本地消息的可靠会话 username、备注及昵称（JSON）')
+    p.add_argument('--username', action='append', default=None, help='按稳定 username 导出，可重复提供以选择多个会话')
+    p.add_argument('--format', dest='formats', action='append', choices=('txt', 'md', 'json'), default=None, help='只写指定聊天格式，可重复提供')
     a = p.parse_args()
+
+    if a.username and a.export_all:
+        p.error('--username 与 --all 不能同时使用。')
+    if a.list_chats:
+        if a.username or a.export_all or a.name:
+            p.error('--list-chats 不能同时进行导出。')
+        from chat_list_service import list_chats
+        print(json.dumps(list_chats(a.db_dir), ensure_ascii=False, indent=2))
+        raise SystemExit(0)
+    if a.username or (a.export_all and a.formats):
+        if a.limit is not None:
+            p.error('按格式选择的新批量入口不支持 --limit，请先列出会话再按 username 选择。')
+        if a.name:
+            p.error('--username 不接受昵称位置参数。')
+        from export_task_service import CancelToken, ExportOptions, export_selected_chats
+        token = CancelToken()
+        previous = signal.signal(signal.SIGINT, lambda *_: token.cancel())
+        try:
+            result = export_selected_chats(a.username, ExportOptions(
+                out_root=a.out, formats=tuple(a.formats or ('txt', 'md', 'json')),
+                db_dir=a.db_dir, export_images=a.images or a.media,
+                export_files=a.files or a.media, export_voices=a.voices or a.media,
+                export_videos=a.videos or a.media, transcribe_voices=a.transcribe_voices),
+                progress=lambda e: print(e.get('log') or f"{e['stage']} {e.get('completed', 0)}/{e.get('total', 0)}"),
+                cancel_token=token)
+        finally:
+            signal.signal(signal.SIGINT, previous)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        raise SystemExit(130 if result['state'] == 'cancelled' else
+                         1 if result['failed'] or result['state'] == 'failed' or not result.get('sensitive_cache_cleanup') else 0)
+    if a.formats:
+        p.error('--format 请配合 --username 或 --all 使用；原昵称入口保留三格式行为。')
 
     if a.limit is not None and a.limit <= 0:
         p.error("--limit 必须是正整数。")

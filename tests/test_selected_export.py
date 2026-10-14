@@ -163,6 +163,40 @@ class SelectedExportTests(unittest.TestCase):
         self.assertTrue(result.get('sensitive_cache_cleanup'))
         self.assertNotIn('SECRET KEY', result['error'])
 
+    def test_selected_export_copies_real_file_and_plain_image_thumbnail(self):
+        from PIL import Image
+        import export_task_service as service
+        table = 'Msg_' + hashlib.md5(b'wxid_a').hexdigest()
+        with closing(sqlite3.connect(self.db.root / 'message_0.db')) as conn:
+            conn.executemany(f'INSERT INTO {table} VALUES (?,?,?,?,?,?)', [
+                (3, 49, 1, 1700000000, '<msg><appmsg><type>6</type><title>测试附件.txt</title></appmsg></msg>', 3),
+                (4, 3, 1, 1700000000, '', 4),
+            ])
+            conn.commit()
+        file = self.db.root / 'msg/file/测试附件.txt'
+        file.parent.mkdir(parents=True)
+        file.write_bytes(b'synthetic attachment')
+        thumb = self.db.root / 'cache/2023-11/Message' / hashlib.md5(b'wxid_a').hexdigest() / 'Thumb/4_1700000000_thumb.jpg'
+        thumb.parent.mkdir(parents=True)
+        Image.new('RGB', (20, 20), 'blue').save(thumb)
+        class MediaBoundary:
+            def _file_name(self, _row):
+                return None
+        self.before = {Path(p): Path(p).read_bytes() for _, p, _ in self.db._db_files}
+        with patch.object(core, 'WeChatDB', return_value=self.db), \
+             patch.object(core, 'MediaDownloader', return_value=MediaBoundary()), \
+             patch.object(core, '_ensure_cfg_dword', return_value=(None, None)):
+            result = service.export_selected_chats(['wxid_a'], service.ExportOptions(
+                out_root=self.root / 'media-out', export_images=True, export_files=True))
+        self.assertEqual(result['exported'], 1)
+        chat = result['chats'][0]
+        self.assertEqual(chat['media_stats']['files_exported'], 1)
+        self.assertEqual(chat['media_stats']['images_exported'], 1)
+        data = json.loads(Path(chat['json']).read_text(encoding='utf-8-sig'))
+        attachments = {m['media']['kind']: m['media']['path'] for m in data['messages'] if m['media']}
+        self.assertEqual((Path(chat['output_dir']) / attachments['file']).read_bytes(), file.read_bytes())
+        self.assertEqual((Path(chat['output_dir']) / attachments['image']).read_bytes(), thumb.read_bytes())
+
 
 if __name__ == '__main__':
     unittest.main()

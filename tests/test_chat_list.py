@@ -7,6 +7,18 @@ from test_export_all import FakeDB, create_contact_db, create_message_db, load_c
 
 
 class ChatListTests(unittest.TestCase):
+    def test_direct_account_directory_is_used_and_unexpected_fallback_rejected(self):
+        import chat_list_service as service
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / '中文 空格'
+            account = root / 'wxid_one'
+            (account / 'db_storage').mkdir(parents=True)
+            db = FakeDB(account)
+            db.account = 'wxid_two'
+            with patch.object(service.core, 'WeChatDB', return_value=db):
+                with self.assertRaises(RuntimeError):
+                    service.list_chats(str(account))
+
     def test_metadata_keeps_remark_and_nickname_without_reading_body(self):
         core = load_core()
         with tempfile.TemporaryDirectory() as tmp:

@@ -18,6 +18,13 @@ on:
       - "README.md"
       - "THIRD_PARTY_NOTICES.md"
       - "assets/app.ico"
+      - "chat_list_service.py"
+      - "export_task_service.py"
+      - "ui/**"
+      - "scripts/**"
+      - "requirements-core.txt"
+      - "requirements-build.txt"
+      - "docs/**"
   push:
     branches:
       - main
@@ -34,10 +41,20 @@ on:
       - "README.md"
       - "THIRD_PARTY_NOTICES.md"
       - "assets/app.ico"
+      - "chat_list_service.py"
+      - "export_task_service.py"
+      - "ui/**"
+      - "scripts/**"
+      - "requirements-core.txt"
+      - "requirements-build.txt"
+      - "docs/**"
 
 jobs:
   build:
     runs-on: windows-latest
+    strategy:
+      matrix:
+        profile: [core, full]
 
     steps:
       - name: Checkout
@@ -53,7 +70,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pyinstaller
+          python -m pip install -r requirements-build.txt
           python -m pip install -r requirements.txt
 
       - name: Verify pinned wechatauto API
@@ -142,52 +159,23 @@ jobs:
       - name: Syntax check
         shell: pwsh
         run: |
-          python -m py_compile app.py cli.py exporter_core.py preview.py wechat_data_dirs.py
+          python -m compileall -q app.py cli.py exporter_core.py preview.py wechat_data_dirs.py chat_list_service.py export_task_service.py ui scripts
 
       - name: Unit tests
         shell: pwsh
         run: |
           python -m unittest discover -s tests -p "test_*.py"
 
-      - name: Build GUI EXE
+      - name: Build and package V1 EXE
         shell: pwsh
-        run: |
-          pyinstaller `
-            --noconfirm `
-            --clean `
-            --onefile `
-            --windowed `
-            --name "WeChat-Chat-Export-for-LLM" `
-            --icon "assets/app.ico" `
-            --collect-all wechatauto `
-            --collect-all winsdk `
-            --collect-all uiautomation `
-            --collect-all comtypes `
-            --collect-all imageio_ffmpeg `
-            --collect-all sherpa_onnx `
-            --collect-all soundfile `
-            --hidden-import win32timezone `
-            --add-binary "tools/rust-silk.exe;tools" `
-            app.py
-
-      - name: Prepare package
-        shell: pwsh
-        run: |
-          Copy-Item README.md dist\\
-          Copy-Item LICENSE dist\\
-          Copy-Item THIRD_PARTY_NOTICES.md dist\\
-          Compress-Archive `
-            -Path dist\\WeChat-Chat-Export-for-LLM.exe,dist\\README.md,dist\\LICENSE,dist\\THIRD_PARTY_NOTICES.md `
-            -DestinationPath dist\\WeChat-Chat-Export-for-LLM-Windows.zip `
-            -Force
+        run: python scripts/build_windows.py --profile ${{ matrix.profile }} --layout onefile
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: WeChat-Chat-Export-for-LLM-Windows
+          name: Export-WeChat-V1-${{ matrix.profile }}-Windows
           path: |
-            dist/WeChat-Chat-Export-for-LLM.exe
-            dist/WeChat-Chat-Export-for-LLM-Windows.zip
-            dist/LICENSE
-            dist/THIRD_PARTY_NOTICES.md
+            dist/Export-WeChat-V1*.exe
+            dist/Export-WeChat-V1*.zip
+            dist/*-build.json
           if-no-files-found: error

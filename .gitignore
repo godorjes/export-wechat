@@ -25,3 +25,15 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Sensitive data and local development environments
+*.db
+*.db-wal
+*.db-shm
+**/image_keys.json
+.env
+.venv/
+venv/
+.superpowers/
+tools/*.exe
+tools/*.zip

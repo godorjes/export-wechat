@@ -1,3 +1,56 @@
+# Windows 微信聊天记录导出工具 V1.0
+
+基于 [zhuzhangxue/wechat-chat-export v1.4.0](https://github.com/zhuzhangxue/wechat-chat-export) 的增量二次开发，沿用原数据库读取、分片发送者解析和媒体导出引擎。
+
+启动 → 检测数据目录/账号 → 加载好友与群聊 → 搜索勾选 → 选择格式/附件 → 后台批量导出 → 查看结果。
+
+- 按稳定 username 选择，重名好友不会混淆；搜索备注、昵称和群名，跨筛选保留勾选。
+- TXT / Markdown / JSON 可独立勾选；图片与普通文件保留原处理逻辑。
+- 后台进度、协作取消、失败隔离、任务汇总；每次导出独立目录，已成功会话保留。
+- 本地运行、原数据库只读，无聊天上传；敏感缓存继承原隔离/清理机制。
+- Tkinter + ttk 原生双栏界面，原预览改为固定页；原 GUI 可通过 --legacy 启动。
+
+目标为 Windows 10/11 x64、微信 4.1.15.13。合成 SQLite 测试不代表真实微信验收；真实账号验证清单见 [运行与验收](docs/ACCEPTANCE.md)。
+
+## 获取 EXE
+
+推送后的 [GitHub Actions](https://github.com/godorjes/export-wechat/actions) 会构建核心和完整单文件包。下载 Windows artifact ZIP 并解压，双击 Export-WeChat-V1.exe。核心包移出可选 ASR，完整包保留旧语音识别依赖；FFmpeg 和 rust-silk 两者都保留。
+
+## 源码运行和测试
+
+```powershell
+python -m pip install -r requirements-core.txt
+python app.py
+python -m unittest discover -s tests -p "test_*.py"
+```
+
+完整旧功能依赖安装 requirements.txt。
+
+```powershell
+python cli.py --list-chats --db-dir "D:\微信数据\xwechat_files\wxid_xxx"
+python cli.py --username wxid_a --username wxid_b --format txt --format json --images --files --out "D:\聊天导出"
+python cli.py --all --format md
+```
+
+原昵称入口与原 --all / --limit 入口仍可用。新批量 CLI 可按 Ctrl+C 协作取消。GUI 能直接预览已导出的 JSON、TXT 或 Markdown。
+
+## 构建
+
+```powershell
+python -m pip install -r requirements.txt -r requirements-build.txt
+python scripts/build_windows.py --profile core --layout onefile
+python scripts/build_windows.py --profile full --layout onefile
+python scripts/build_windows.py --profile core --layout onedir --distdir dist/onedir
+```
+
+构建脚本校验固定 rust-silk SHA256，打包许可证与验收说明，并记录实际体积及构建时间。源码改动、基线和测试证据见 [代码审查](docs/CODE_AUDIT.md) 和 [交付报告](docs/DELIVERY.md)。
+
+Apache-2.0；保留原项目和 [第三方声明](THIRD_PARTY_NOTICES.md)。请仅处理自己有权访问的数据，不关闭安全保护。
+
+---
+
+# 上游 v1.4.0 说明（旧界面和原 CLI）
+
 # 微信聊天记录导出
 
 把 Windows 微信 4.1.12+ 的聊天记录导出为 TXT、Markdown 和 JSON，方便交给 GPT、Claude、Gemini 等大模型读取，也可以自己留存、检索或继续处理。

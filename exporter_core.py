@@ -961,7 +961,7 @@ def _resource_image_hash(db: WeChatDB, username: str, local_id) -> str:
         conn.close()
 
 
-def _index_image_files(db: WeChatDB, username: str) -> dict[str, Path]:
+def _index_image_files(db: WeChatDB, username: str, cancel_token=None) -> dict[str, Path]:
     chat_md5 = hashlib.md5(username.encode("utf-8")).hexdigest()
     base = Path(db.account_dir) / "msg" / "attach" / chat_md5
     if not base.exists():
@@ -970,6 +970,7 @@ def _index_image_files(db: WeChatDB, username: str) -> dict[str, Path]:
     out = {}
     try:
         for p in base.rglob("*.dat"):
+            _check_cancel(cancel_token)
             out.setdefault(p.name.lower(), p)
     except OSError:
         pass
@@ -1043,7 +1044,7 @@ def _filename_loose_key(name: str) -> str:
     return (stem + p.suffix).casefold()
 
 
-def _index_local_files(db: WeChatDB) -> dict:
+def _index_local_files(db: WeChatDB, cancel_token=None) -> dict:
     """索引微信可能使用的文件缓存目录；同时建立严格/宽松文件名索引。"""
     roots = [
         Path(db.account_dir) / "msg" / "file",
@@ -1065,6 +1066,7 @@ def _index_local_files(db: WeChatDB) -> dict:
         try:
             iterator = base.rglob("*")
             for p in iterator:
+                _check_cancel(cancel_token)
                 if not p.is_file():
                     continue
                 try:
@@ -2712,7 +2714,8 @@ def _export_chat_impl(
 
         if image_rows_exist:
             log("正在定位本机图片缓存…")
-            image_index = _index_image_files(db, username)
+            image_index = (_index_image_files(db, username, cancel_token=cancel_token)
+                           if cancel_token else _index_image_files(db, username))
             if "cfg_probe" in cache:
                 cfg_dword, cfg_error = cache["cfg_probe"]
                 log("复用已探测的图片解密配置。")
@@ -2743,7 +2746,8 @@ def _export_chat_impl(
                 log(f"复用已索引的本机文件缓存：{file_index.get('count', 0)} 个文件。")
             else:
                 log("正在索引本机文件缓存…")
-                file_index = _index_local_files(db)
+                file_index = (_index_local_files(db, cancel_token=cancel_token)
+                              if cancel_token else _index_local_files(db))
                 cache["file_index"] = file_index
                 log(f"已索引本机文件缓存：{file_index.get('count', 0)} 个文件。")
 
