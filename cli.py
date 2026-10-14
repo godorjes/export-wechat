@@ -112,7 +112,8 @@ if __name__ == "__main__":
             signal.signal(signal.SIGINT, previous)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         raise SystemExit(130 if result['state'] == 'cancelled' else
-                         1 if result['failed'] or result['state'] == 'failed' or not result.get('sensitive_cache_cleanup') else 0)
+                         1 if result['failed'] or result['state'] == 'failed' or result.get('summary_error')
+                         or result.get('partial_cleanup_error') or not result.get('sensitive_cache_cleanup') else 0)
     if a.formats:
         p.error('--format 请配合 --username 或 --all 使用；原昵称入口保留三格式行为。')
 

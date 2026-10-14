@@ -10,27 +10,28 @@ import exporter_core as core
 @contextmanager
 def database_session(db_dir=None, progress=None, account=None, state=None):
     """Use the upstream reader only within its existing sensitive sandbox."""
-    core.clear_current_sensitive_cache()
-    workdir = core._create_sensitive_workdir()
-    state = state if state is not None else {}
-    try:
-        with core._upstream_sensitive_sandbox(workdir):
-            if db_dir and (Path(db_dir) / 'db_storage').is_dir():
-                source = Path(db_dir)
-                account = source.name
-                db_dir = source.parent
-            resolved = core.resolve_db_dir(db_dir) if db_dir else None
-            kwargs = {'db_dir': resolved, 'workdir': str(workdir)}
-            if account:
-                kwargs['account'] = account
-            state['db'] = core.WeChatDB(**kwargs)
-            if account and getattr(state['db'], 'account', account) != account:
-                raise RuntimeError('指定账号无法读取，请确认该账号已经登录。')
-            yield state
-    finally:
-        ok, error = core._cleanup_sensitive_workdir(workdir, progress=progress)
-        state['sensitive_cache_cleanup'] = ok
-        state['sensitive_cache_cleanup_error'] = error
+    with core._SENSITIVE_SANDBOX_LOCK:
+        core.clear_current_sensitive_cache()
+        workdir = core._create_sensitive_workdir()
+        state = state if state is not None else {}
+        try:
+            with core._upstream_sensitive_sandbox(workdir):
+                if db_dir and (Path(db_dir) / 'db_storage').is_dir():
+                    source = Path(db_dir)
+                    account = source.name
+                    db_dir = source.parent
+                resolved = core.resolve_db_dir(db_dir) if db_dir else None
+                kwargs = {'db_dir': resolved, 'workdir': str(workdir)}
+                if account:
+                    kwargs['account'] = account
+                state['db'] = core.WeChatDB(**kwargs)
+                if account and getattr(state['db'], 'account', account) != account:
+                    raise RuntimeError('指定账号无法读取，请确认该账号已经登录。')
+                yield state
+        finally:
+            ok, error = core._cleanup_sensitive_workdir(workdir, progress=progress)
+            state['sensitive_cache_cleanup'] = ok
+            state['sensitive_cache_cleanup_error'] = error
 
 
 def list_chats(db_dir=None, progress=None):

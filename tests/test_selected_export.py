@@ -197,6 +197,47 @@ class SelectedExportTests(unittest.TestCase):
         self.assertEqual((Path(chat['output_dir']) / attachments['file']).read_bytes(), file.read_bytes())
         self.assertEqual((Path(chat['output_dir']) / attachments['image']).read_bytes(), thumb.read_bytes())
 
+    def test_real_pinned_self_info_method_does_not_leave_sqlite_handles_open(self):
+        opened = []
+        original_open = self.db._open
+        def tracked_open(rel):
+            conn = original_open(rel)
+            opened.append(conn)
+            self.addCleanup(conn.close)
+            return conn
+        self.db._open = tracked_open
+        self.db.wxid = 'wxid_self'
+        # Save the actual pinned method before replacing only its constructor.
+        from wechatauto import WeChatDB
+        self.db.get_self_info = lambda: WeChatDB.get_self_info(self.db)
+        self.run_export(['wxid_a'])
+        for conn in opened:
+            with self.assertRaises(sqlite3.ProgrammingError):
+                conn.execute('SELECT 1')
+
+    def test_persistent_summary_failure_returns_retained_paths_and_keeps_marker(self):
+        import export_task_service as service
+        with patch.object(service, '_write_summary', side_effect=OSError('SECRET BODY')):
+            result = self.run_export(['wxid_a'])
+        self.assertEqual(result['exported'], 1)
+        self.assertTrue(Path(result['chats'][0]['txt']).is_file())
+        self.assertTrue((Path(result['output_dir']) / 'INCOMPLETE.txt').is_file())
+        self.assertTrue(result.get('summary_error'))
+        self.assertNotIn('SECRET BODY', result['summary_error'])
+
+    def test_cancel_during_constructor_skips_all_metadata_work(self):
+        import export_task_service as service
+        token = service.CancelToken()
+        def connect(**kwargs):
+            token.cancel()
+            return self.db
+        with patch.object(core, 'WeChatDB', side_effect=connect), \
+             patch.object(core, '_batch_chat_candidates', side_effect=AssertionError('No enumeration after cancel')):
+            result = service.export_selected_chats(['wxid_a'], service.ExportOptions(out_root=self.root), cancel_token=token)
+        self.assertEqual(result['state'], 'cancelled')
+        self.assertTrue(result['sensitive_cache_cleanup'])
+        self.assertEqual(result['cancelled'], 1)
+
 
 if __name__ == '__main__':
     unittest.main()

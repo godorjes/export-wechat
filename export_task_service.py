@@ -118,6 +118,16 @@ def export_selected_chats(usernames, options, progress=None, cancel_token=None):
                   formats=list(options.formats), chats=[])
     current_name = ''
     session = {}
+    selected = usernames or []
+
+    def persist_summary():
+        result.pop('summary_error', None)
+        try:
+            _write_summary(task, result)
+            return True
+        except OSError as exc:
+            result['summary_error'] = safe_error(exc)
+            return False
 
     def emit(stage, **fields):
         if progress:
@@ -130,9 +140,11 @@ def export_selected_chats(usernames, options, progress=None, cancel_token=None):
 
     try:
         emit('连接数据库')
+        token.check()
         with database_session(options.db_dir, log, options.account, session):
             db = session['db']
-            chats, unresolved = core._batch_chat_candidates(db, log)
+            token.check()
+            chats, unresolved = core._batch_chat_candidates(db, log, cancel_token=token)
             available = {c['username']: c for c in chats}
             selected = list(available) if usernames is None else usernames
             result.update(discovered_total=len(chats), selected_total=len(selected),
@@ -184,10 +196,21 @@ def export_selected_chats(usernames, options, progress=None, cancel_token=None):
                         entry['error'] = safe_error(exc)
                         result['failed'] += 1
                 result['chats'].append(entry)
-                _write_summary(task, result)
+                persist_summary()
                 emit('会话完成', status=entry['status'])
         result.update({k: v for k, v in session.items() if k != 'db'})
         result['state'] = 'cancelled' if token.cancelled else ('completed_with_errors' if result['failed'] else 'completed')
+    except ExportCancelled:
+        result['state'] = 'cancelled'
+        result['selected_total'] = len(selected)
+        processed = {c['username'] for c in result['chats']}
+        for username in selected:
+            if username not in processed:
+                result['chats'].append(dict(username=username, name=username, status='cancelled',
+                                           message_count=0, output_dir=None, txt=None, md=None, json=None))
+                result['cancelled'] += 1
+        result.update({k: v for k, v in session.items() if k != 'db'})
+        result.setdefault('sensitive_cache_cleanup', True)
     except Exception as exc:
         result.update(state='failed', error=safe_error(exc))
         if 'session' in locals():
@@ -200,8 +223,13 @@ def export_selected_chats(usernames, options, progress=None, cancel_token=None):
             shutil.rmtree(partial)
         except OSError as exc:
             result['partial_cleanup_error'] = safe_error(exc)
-        if not result.get('partial_cleanup_error'):
-            marker.unlink(missing_ok=True)
-        _write_summary(task, result)
+        summary_ok = persist_summary()
+        if not summary_ok and result['state'] == 'completed':
+            result['state'] = 'completed_with_errors'
+        if summary_ok and not result.get('partial_cleanup_error'):
+            try:
+                marker.unlink(missing_ok=True)
+            except OSError as exc:
+                result['partial_cleanup_error'] = safe_error(exc)
     emit('任务结束', state=result['state'])
     return result

@@ -341,6 +341,9 @@ class App(tk.Tk):
                 self.log(f"{c['name']}：{c['error']}")
         if result.get('error'):
             self.log(result['error'])
+        if result.get('summary_error'):
+            self.state.set('记录已保留，任务汇总写出失败')
+            self.log('任务汇总未完整写出：' + result['summary_error'])
         if not result.get('sensitive_cache_cleanup') or result.get('partial_cleanup_error'):
             self.log('部分临时文件未完全清理，请查看任务汇总并关闭程序后重试清理。')
         self.log('结果目录：' + result['output_dir'])

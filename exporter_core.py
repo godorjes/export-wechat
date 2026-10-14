@@ -755,6 +755,30 @@ def _normalize_formats(formats=None):
     return selected
 
 
+def _closed_self_info(db):
+    """Retain pinned identity semantics while owning its unclosed SQLite handles."""
+    original = db._open
+    instance_override = vars(db).get('_open')
+    had_override = '_open' in vars(db)
+    opened = []
+
+    def tracked_open(*args, **kwargs):
+        conn = original(*args, **kwargs)
+        opened.append(conn)
+        return conn
+
+    db._open = tracked_open
+    try:
+        return db.get_self_info()
+    finally:
+        if had_override:
+            db._open = instance_override
+        else:
+            del db._open
+        for conn in opened:
+            conn.close()
+
+
 def load_rows(db: WeChatDB, username: str, cancel_token=None):
     """跨全部 message_*.db 读取，保留来源库，避免只命中第一个分片。"""
     md5hex = hashlib.md5(username.encode("utf-8")).hexdigest()
@@ -2612,7 +2636,7 @@ def _export_chat_impl(
     if "identity_bundle" in cache:
         self_username, nicks = cache["identity_bundle"]
     else:
-        self_info = db.get_self_info()
+        self_info = _closed_self_info(db)
         # get_self_info already uses the dependency's account-directory normalization.
         # Compare its stable username exactly; never strip suffixes from message IDs.
         self_username = _identity_username(self_info.get("username"))
@@ -3013,9 +3037,10 @@ def _stable_batch_folder(username: str) -> str:
     return safe_folder_name(f"{stem} [{digest}]")
 
 
-def _batch_message_hashes(db) -> set[str]:
+def _batch_message_hashes(db, cancel_token=None) -> set[str]:
     hashes = set()
     for rel in db._message_dbs():
+        _check_cancel(cancel_token)
         conn = db._open(rel)
         try:
             rows = conn.execute(
@@ -3023,6 +3048,7 @@ def _batch_message_hashes(db) -> set[str]:
                 "WHERE type='table' AND name LIKE 'Msg_%'"
             )
             for row in rows:
+                _check_cancel(cancel_token)
                 name = row[0]
                 if not isinstance(name, str):
                     continue
@@ -3034,13 +3060,14 @@ def _batch_message_hashes(db) -> set[str]:
     return hashes
 
 
-def _batch_chat_candidates(db, progress=None):
+def _batch_chat_candidates(db, progress=None, cancel_token=None):
     """Resolve actual local message tables to stable private/group usernames."""
     def log(message):
         if progress:
             progress(message)
 
     names = {}
+    _check_cancel(cancel_token)
     contact_metadata = {}
     last_times = {}
     md5_to_username = {}
@@ -3067,11 +3094,13 @@ def _batch_chat_candidates(db, progress=None):
                 pass
 
     for username, display in nicks.items():
+        _check_cancel(cancel_token)
         add_username(username, display)
 
     # Scan only the exact upstream contact/session tables, not arbitrary tables
     # containing a generic "username" column.
     for item in getattr(db, "_db_files", []) or []:
+        _check_cancel(cancel_token)
         if len(item) < 2:
             continue
         rel, path = item[0], item[1]
@@ -3089,6 +3118,7 @@ def _batch_chat_candidates(db, progress=None):
                         "SELECT username, nick_name, remark FROM contact"
                     )
                     for username, nick_name, remark in rows:
+                        _check_cancel(cancel_token)
                         contact_metadata[username] = {
                             "nick_name": str(nick_name or ""),
                             "remark": str(remark or ""),
@@ -3106,6 +3136,7 @@ def _batch_chat_candidates(db, progress=None):
                         "FROM SessionTable WHERE is_hidden=0"
                     )
                     for username, last_timestamp in rows:
+                        _check_cancel(cancel_token)
                         add_username(
                             username,
                             nicks.get(username) or "",
@@ -3119,12 +3150,13 @@ def _batch_chat_candidates(db, progress=None):
             except Exception:
                 pass
 
-    hashes = _batch_message_hashes(db)
+    _check_cancel(cancel_token)
+    hashes = _batch_message_hashes(db, cancel_token=cancel_token)
 
     self_username = None
     try:
         self_username = _identity_username(
-            (db.get_self_info() or {}).get("username")
+            (_closed_self_info(db) or {}).get("username")
         )
     except Exception:
         pass

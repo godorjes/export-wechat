@@ -62,7 +62,10 @@ def main():
         print(log_path.read_text(encoding='utf8', errors='replace')[-5000:])
         raise SystemExit(completed.returncode)
     package = dist / (name + '.exe' if a.layout == 'onefile' else name)
-    license_files = ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'README.md', 'docs/ACCEPTANCE.md']
+    license_files = ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'README.md',
+                     'docs/ACCEPTANCE.md', 'docs/CODE_AUDIT.md']
+    if (ROOT / 'docs/DELIVERY.md').is_file():
+        license_files.append('docs/DELIVERY.md')
     archive = dist / f'{name}-{a.layout}-Windows.zip'
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as z:
         files = [package] if package.is_file() else package.rglob('*')
@@ -70,7 +73,7 @@ def main():
             if f.is_file():
                 z.write(f, f.relative_to(dist))
         for f in license_files:
-            z.write(ROOT / f, Path(f).name)
+            z.write(ROOT / f, f)
     size = package.stat().st_size if package.is_file() else sum(f.stat().st_size for f in package.rglob('*') if f.is_file())
     report = {'profile': a.profile, 'layout': a.layout, 'package_bytes': size,
               'zip_bytes': archive.stat().st_size, 'build_seconds': round(time.perf_counter()-started, 2),
