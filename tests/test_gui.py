@@ -41,12 +41,12 @@ class GuiTests(unittest.TestCase):
         widget.category.set('群聊')
         widget.select_visible()
         widget.query.set('无结果')
-        self.assertEqual(widget.tree.get_children(), ())
+        self.assertEqual(widget.visible, [])
         self.assertEqual(widget.model.selected, {'a', 'g@chatroom'})
         widget.replace(list(widget.model.chats.values()))
         widget.query.set('')
         widget.category.set('全部')
-        self.assertEqual(len(widget.tree.get_children()), 3)
+        self.assertEqual(len(widget.visible), 3)
         self.assertEqual(widget.model.selected, {'a', 'g@chatroom'})
 
     def test_large_json_preview_never_renders_more_than_one_page(self):
@@ -127,21 +127,34 @@ class GuiTests(unittest.TestCase):
                     time.sleep(.01)
             self.assertIsNotNone(app.last_result)
             self.assertEqual(app.last_result['exported'], 1)
-            self.assertTrue(Path(app.last_result['chats'][0]['json']).is_file())
+            self.assertTrue(Path(app.last_result['chats'][0]['txt']).is_file())
+            self.assertIsNone(app.last_result['chats'][0]['json'])
             self.assertEqual(app.loaded_source, db.account_dir)
 
-    def test_minimum_window_keeps_action_buttons_inside_without_overlap(self):
+    def test_minimum_window_keeps_progress_and_cancellation_reachable(self):
         from ui.main_window import App
+        from export_task_service import CancelToken
         self._destroy_root()
         app = App(auto_load=False)
         self.addCleanup(lambda: app.destroy() if app.winfo_exists() else None)
         app.geometry('980x640')
+        token = app.cancel_token = CancelToken()
+        gate = threading.Event()
+        app.launch('probe', lambda: gate.wait(2), lambda _: None)
         app.update()
-        controls = [app.export_btn, app.all_btn, app.cancel_btn]
-        bounds = [(w.winfo_rootx(), w.winfo_rootx() + w.winfo_width()) for w in controls]
-        self.assertLessEqual(bounds[0][1], bounds[1][0])
-        self.assertLessEqual(bounds[1][1], bounds[2][0])
-        self.assertLessEqual(bounds[2][1], app.winfo_rootx() + app.winfo_width())
+        try:
+            self.assertFalse(app.export_btn.winfo_ismapped())
+            self.assertTrue(app.cancel_btn.winfo_ismapped())
+            self.assertLessEqual(app.cancel_btn.winfo_rootx() + app.cancel_btn.winfo_width(), app.winfo_rootx() + app.winfo_width())
+            self.assertLessEqual(app.cancel_btn.winfo_rooty() + app.cancel_btn.winfo_height(), app.winfo_rooty() + app.winfo_height())
+            app.cancel_btn.invoke()
+            self.assertTrue(token.cancelled)
+        finally:
+            gate.set()
+            deadline = time.monotonic() + 3
+            while app.busy and time.monotonic() < deadline:
+                app.update()
+                time.sleep(.01)
 
 
 if __name__ == '__main__':

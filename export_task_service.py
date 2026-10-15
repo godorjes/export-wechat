@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager
 from datetime import datetime
-import json
+import errno
+import hashlib
+import os
 import shutil
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 import exporter_core as core
@@ -72,29 +76,97 @@ def validate_output_directory(path):
     return root
 
 
-def _write_summary(root, result):
-    data = {k: v for k, v in result.items() if not k.startswith('index_')}
-    target = root / 'task_index.json'
-    tmp = root / 'task_index.json.tmp'
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8-sig')
-    tmp.replace(target)
-    lines = ['# 微信聊天导出任务', '',
-             f"状态：{result['state']}；成功 {result['exported']}；失败 {result['failed']}；"
-             f"无消息 {result['skipped_empty']}；取消 {result['cancelled']}；消息 {result['total_messages']}", '',
-             '敏感缓存清理：' + ('成功' if result.get('sensitive_cache_cleanup') else '等待结束或清理未成功'), '']
-    for item in result['chats']:
-        # Escape display metadata before writing a Markdown index.
-        name = str(item['name']).replace('\n', ' ').replace('[', '\\[').replace(']', '\\]')
-        lines.append(f"- {name} ({item['username']})：{item['status']}，{item['message_count']} 条")
-        for fmt in ('txt', 'md', 'json'):
-            if item.get(fmt):
-                rel = Path(item[fmt]).relative_to(root).as_posix()
-                lines.append(f'  - [{fmt.upper()}]({core._markdown_href(rel)})')
-        if item.get('error'):
-            lines.append('  - ' + item['error'])
-    (root / 'task_index.md').write_text('\n'.join(lines) + '\n', encoding='utf-8-sig')
-    result['index_json'] = str(target)
-    result['index_md'] = str(root / 'task_index.md')
+class PublicationError(OSError):
+    def __init__(self, cause, retained_paths):
+        super().__init__('Incomplete output cleanup')
+        self.cause = cause
+        self.retained_paths = retained_paths
+
+
+@contextmanager
+def _output_lock(destination, token):
+    # Stable across processes and unaffected by the sensitive tempfile sandbox.
+    locks = core._persistent_app_data_dir() / 'output-locks'
+    locks.mkdir(parents=True, exist_ok=True)
+    identity = os.path.normcase(str(destination.resolve())).encode('utf8')
+    lock_path = locks / (hashlib.sha256(identity).hexdigest() + '.lock')
+    with lock_path.open('a+b') as handle:
+        acquired = False
+        if os.name == 'nt':
+            import msvcrt
+            acquire = lambda: msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            release = lambda: msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            acquire = lambda: fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            release = lambda: fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        try:
+            while not acquired:
+                token.check()
+                handle.seek(0)
+                try:
+                    acquire()
+                    acquired = True
+                except OSError as exc:
+                    if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                        raise
+                    time.sleep(.05)
+            yield
+        finally:
+            if acquired:
+                try:
+                    handle.seek(0)
+                    release()
+                except OSError:
+                    # Closing the descriptor also releases the OS lock.
+                    pass
+
+
+def _available_stem(name, reserved):
+    base = core.safe_folder_name(name)[:80].rstrip(' .') or '未命名会话'
+    device = base.split('.')[0].upper()
+    if device in {'CON', 'PRN', 'AUX', 'NUL', *(f'COM{i}' for i in range(1, 10)), *(f'LPT{i}' for i in range(1, 10))}:
+        base = '_' + base
+    number = 1
+    while True:
+        stem = base if number == 1 else f'{base} ({number})'
+        names = {f'{stem}.{fmt}'.casefold() for fmt in ('txt', 'md', 'json')}
+        names.add(f'{stem}_media'.casefold())
+        if not names & reserved:
+            reserved.update(names)
+            return stem
+        number += 1
+
+
+def _publish_flat(source, destination, exported, token):
+    """Publish complete files; Windows rename never replaces an existing target."""
+    moved = []
+    try:
+        # Attachments must be available before a completed record is exposed.
+        items = sorted(source.iterdir(), key=lambda p: (p.is_file(), p.name))
+        for item in items:
+            token.check()
+            target = destination / item.name
+            if target.exists() or target.is_symlink():
+                raise FileExistsError()
+            item.rename(target)
+            moved.append((item, target))
+        token.check()
+    except BaseException as exc:
+        retained = []
+        for staged, published in reversed(moved):
+            try:
+                published.rename(staged)
+            except OSError:
+                retained.append(str(published))
+        if retained:
+            raise PublicationError(exc, retained) from exc
+        raise
+    result = dict(exported, output_dir=str(destination))
+    for key in ('txt', 'md', 'json'):
+        if result.get(key):
+            result[key] = str(destination / Path(result[key]).name)
+    return result
 
 
 def export_selected_chats(usernames, options, progress=None, cancel_token=None):
@@ -107,11 +179,10 @@ def export_selected_chats(usernames, options, progress=None, cancel_token=None):
             raise ValueError('请至少选择一个有效会话。')
     token = cancel_token or CancelToken()
     out = validate_output_directory(options.out_root)
-    task = Path(tempfile.mkdtemp(prefix=datetime.now().strftime('task-%Y%m%d-%H%M%S-'), dir=out))
-    partial = task / '.partial'
-    partial.mkdir()
-    marker = task / 'INCOMPLETE.txt'
-    marker.write_text('任务尚未完成。仅 task_index 中 exported 的会话为完整结果。', encoding='utf8')
+    dated_name = datetime.now().strftime('%Y-%m-%d') + 'WeChatExport'
+    task = out if out.name == dated_name else out / dated_name
+    task.mkdir(parents=True, exist_ok=True)
+    partial = Path(tempfile.mkdtemp(prefix='.partial-', dir=task))
     result = dict(state='running', output_dir=str(task), discovered_total=0,
                   selected_total=0, unresolved_message_tables=0, exported=0,
                   failed=0, skipped_empty=0, cancelled=0, total_messages=0,
@@ -119,15 +190,6 @@ def export_selected_chats(usernames, options, progress=None, cancel_token=None):
     current_name = ''
     session = {}
     selected = usernames or []
-
-    def persist_summary():
-        result.pop('summary_error', None)
-        try:
-            _write_summary(task, result)
-            return True
-        except OSError as exc:
-            result['summary_error'] = safe_error(exc)
-            return False
 
     def emit(stage, **fields):
         if progress:
@@ -167,25 +229,32 @@ def export_selected_chats(usernames, options, progress=None, cancel_token=None):
                     folder = core._stable_batch_folder(username)
                     emit('读取消息')
                     try:
-                        exported = core._export_chat_impl(
-                            out_root=partial, db=db, contact=contact, folder_name=folder,
-                            index_cache=cache, formats=options.formats, cancel_token=token,
-                            progress=log, event=lambda e: emit(e['stage'], current=e['current'], current_total=e['total']),
-                            export_images=options.export_images, export_files=options.export_files,
-                            export_voices=options.export_voices, export_videos=options.export_videos,
-                            transcribe_voices=options.transcribe_voices,
-                        )
-                        token.check()
-                        source = partial / folder
-                        final = task / folder
-                        source.rename(final)
-                        for key in ('txt', 'md', 'json'):
-                            if exported.get(key):
-                                exported[key] = str(final / Path(exported[key]).name)
-                        exported['output_dir'] = str(final)
+                        with _output_lock(task, token):
+                            reserved = {p.name.casefold() for p in task.iterdir()}
+                            stem = _available_stem(current_name, reserved)
+                            exported = core._export_chat_impl(
+                                out_root=partial, db=db, contact=contact, folder_name=folder,
+                                index_cache=cache, formats=options.formats, cancel_token=token,
+                                file_stem=stem, media_folder=stem + '_media',
+                                progress=log, event=lambda e: emit(e['stage'], current=e['current'], current_total=e['total']),
+                                export_images=options.export_images, export_files=options.export_files,
+                                export_voices=options.export_voices, export_videos=options.export_videos,
+                                transcribe_voices=options.transcribe_voices,
+                            )
+                            token.check()
+                            exported = _publish_flat(partial / folder, task, exported, token)
                         entry.update(exported, status='exported')
                         result['exported'] += 1
                         result['total_messages'] += exported['message_count']
+                    except PublicationError as exc:
+                        entry['error'] = safe_error(exc.cause)
+                        entry['partial_files'] = exc.retained_paths
+                        result['partial_cleanup_error'] = '部分未完成文件无法回收，请关闭占用文件的程序后清理。'
+                        if isinstance(exc.cause, ExportCancelled):
+                            entry['status'] = 'cancelled'
+                            result['cancelled'] += 1
+                        else:
+                            result['failed'] += 1
                     except ExportCancelled:
                         entry['status'] = 'cancelled'
                         result['cancelled'] += 1
@@ -196,7 +265,6 @@ def export_selected_chats(usernames, options, progress=None, cancel_token=None):
                         entry['error'] = safe_error(exc)
                         result['failed'] += 1
                 result['chats'].append(entry)
-                persist_summary()
                 emit('会话完成', status=entry['status'])
         result.update({k: v for k, v in session.items() if k != 'db'})
         result['state'] = 'cancelled' if token.cancelled else ('completed_with_errors' if result['failed'] else 'completed')
@@ -218,18 +286,10 @@ def export_selected_chats(usernames, options, progress=None, cancel_token=None):
     finally:
         try:
             # Only remove this batch's own staging path, never prior exports.
-            if partial.resolve().parent != task.resolve():
+            if partial.resolve().parent != task.resolve() or not partial.name.startswith('.partial-'):
                 raise ValueError('Unexpected staging path')
             shutil.rmtree(partial)
         except OSError as exc:
             result['partial_cleanup_error'] = safe_error(exc)
-        summary_ok = persist_summary()
-        if not summary_ok and result['state'] == 'completed':
-            result['state'] = 'completed_with_errors'
-        if summary_ok and not result.get('partial_cleanup_error'):
-            try:
-                marker.unlink(missing_ok=True)
-            except OSError as exc:
-                result['partial_cleanup_error'] = safe_error(exc)
     emit('任务结束', state=result['state'])
     return result

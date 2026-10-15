@@ -2587,6 +2587,8 @@ def _export_chat_impl(
     formats=None,
     cancel_token=None,
     event=None,
+    file_stem=None,
+    media_folder="media",
 ):
     formats = _normalize_formats(formats)
 
@@ -2809,10 +2811,11 @@ def _export_chat_impl(
                 )
                 log("本地语音识别已就绪。")
 
-        image_dir = chat_dir / "media" / "images"
-        file_dir = chat_dir / "media" / "files"
-        voice_dir = chat_dir / "media" / "voices"
-        video_dir = chat_dir / "media" / "videos"
+        media_root = chat_dir / safe_folder_name(media_folder)
+        image_dir = media_root / "images"
+        file_dir = media_root / "files"
+        voice_dir = media_root / "voices"
+        video_dir = media_root / "videos"
 
         for idx, (row, msg) in enumerate(zip(rows, parsed), 1):
             _check_cancel(cancel_token)
@@ -2944,9 +2947,10 @@ def _export_chat_impl(
     if transcribe_voices and 'asr_cache_dirty' in locals() and asr_cache_dirty and asr_cache_path:
         _save_asr_cache(asr_cache_path, asr_cache)
 
-    txt_path = chat_dir / "chat_full_for_llm.txt"
-    md_path = chat_dir / "chat_full_for_llm.md"
-    json_path = chat_dir / "chat_full_parsed.json"
+    stem = safe_folder_name(file_stem) if file_stem else None
+    txt_path = chat_dir / (f"{stem}.txt" if stem else "chat_full_for_llm.txt")
+    md_path = chat_dir / (f"{stem}.md" if stem else "chat_full_for_llm.md")
+    json_path = chat_dir / (f"{stem}.json" if stem else "chat_full_parsed.json")
     stage("写出文件", len(parsed), len(parsed))
     if "txt" in formats:
         _write_txt(parsed, txt_path, is_group, target_name, cancel_token=cancel_token)

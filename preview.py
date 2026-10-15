@@ -22,8 +22,15 @@ class ChatPreview(tk.Toplevel):
 
         self.json_path = Path(json_path)
         self.chat_dir = self.json_path.parent
-        with self.json_path.open("r", encoding="utf-8-sig") as f:
-            data = json.load(f)
+        try:
+            with self.json_path.open("r", encoding="utf-8-sig") as f:
+                data = json.load(f)
+            if (not isinstance(data, dict) or not isinstance(data.get("messages"), list)
+                    or not all(isinstance(m, dict) for m in data["messages"])):
+                raise ValueError('不是聊天记录 JSON。')
+        except (OSError, ValueError, TypeError):
+            self.destroy()
+            raise
 
         self.chat_name = data.get("chat_name") or self.chat_dir.name
         self.messages = data.get("messages") or []
@@ -392,7 +399,9 @@ class TextPageReader:
 class TextPreview(tk.Toplevel):
     def __init__(self, parent, path):
         super().__init__(parent)
-        self.title('聊天记录预览 · ' + Path(path).parent.name)
+        record = Path(path)
+        name = record.parent.name if record.stem == 'chat_full_for_llm' else record.stem
+        self.title('聊天记录预览 · ' + name)
         self.geometry('920x720')
         self.reader = TextPageReader(path)
         self.rowconfigure(1, weight=1)
@@ -434,6 +443,11 @@ class TextPreview(tk.Toplevel):
 def open_export_preview(parent, folder):
     folder = Path(folder)
     try:
+        if folder.is_file():
+            if folder.suffix.lower() == '.json':
+                return open_chat_preview(parent, folder)
+            if folder.suffix.lower() in {'.txt', '.md'}:
+                return TextPreview(parent, folder)
         if (folder / 'chat_full_parsed.json').is_file():
             return open_chat_preview(parent, folder / 'chat_full_parsed.json')
         for name in ('chat_full_for_llm.txt', 'chat_full_for_llm.md'):

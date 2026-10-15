@@ -1,12 +1,14 @@
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import unquote
 
 import exporter_core as core
 from test_export_all import FakeDB, create_contact_db
@@ -49,9 +51,9 @@ class SelectedExportTests(unittest.TestCase):
         self.db = fixture_db(self.root / '中文 source')
         self.before = {Path(p): Path(p).read_bytes() for _, p, _ in self.db._db_files}
 
-    def run_export(self, usernames, formats=('txt', 'md', 'json'), token=None, progress=None):
+    def run_export(self, usernames, formats=('txt', 'md', 'json'), token=None, progress=None, out_root=None):
         import export_task_service as service
-        options = service.ExportOptions(out_root=self.root / '输出 path', formats=formats)
+        options = service.ExportOptions(out_root=out_root or self.root / '输出 path', formats=formats)
         with patch.object(core, 'WeChatDB', return_value=self.db) as constructor:
             result = service.export_selected_chats(usernames, options, progress, token)
         self.assertEqual(constructor.call_count, 1)
@@ -65,16 +67,17 @@ class SelectedExportTests(unittest.TestCase):
         self.assertEqual(result['exported'], 2)
         self.assertEqual(result['total_messages'], 4)
         a, b = result['chats']
-        self.assertNotEqual(a['output_dir'], b['output_dir'])
+        self.assertEqual(a['output_dir'], b['output_dir'])
+        self.assertNotEqual(a['json'], b['json'])
         data = json.loads(Path(a['json']).read_text(encoding='utf-8-sig'))
         self.assertEqual([m['is_self'] for m in data['messages']], [True, False])
         self.assertEqual([m['sender_username'] for m in data['messages']], ['wxid_self', 'wxid_a'])
         self.assertEqual([m['content'] for m in data['messages']], ['合成消息0', '合成消息1'])
 
     def test_only_requested_chat_format_is_written(self):
-        for fmt, file in [('txt', 'chat_full_for_llm.txt'), ('md', 'chat_full_for_llm.md'), ('json', 'chat_full_parsed.json')]:
+        for fmt, file in [('txt', '同名.txt'), ('md', '同名.md'), ('json', '同名.json')]:
             with self.subTest(fmt=fmt):
-                result = self.run_export(['wxid_a'], (fmt,))
+                result = self.run_export(['wxid_a'], (fmt,), out_root=self.root / fmt)
                 folder = Path(result['chats'][0]['output_dir'])
                 self.assertEqual({p.name for p in folder.iterdir()}, {file})
                 self.assertIsNone(result['chats'][0].get('json') if fmt != 'json' else result['chats'][0].get('txt'))
@@ -104,8 +107,7 @@ class SelectedExportTests(unittest.TestCase):
         self.assertEqual(result['state'], 'cancelled')
         self.assertEqual(result['exported'], 0)
         self.assertEqual(result['cancelled'], 2)
-        self.assertEqual(list(Path(result['output_dir']).glob('wxid_*')), [])
-        self.assertFalse((Path(result['output_dir']) / '.partial').exists())
+        self.assertEqual(list(Path(result['output_dir']).iterdir()), [])
         self.assertEqual(tempfile.tempdir, old_temp)
         self.assertEqual(os.environ.get(core.UPSTREAM_KEYS_ENV), old_keys)
 
@@ -124,13 +126,14 @@ class SelectedExportTests(unittest.TestCase):
         with patch.object(core, '_write_txt', side_effect=OSError('SECRET CHAT CONTENT')):
             result = self.run_export(['wxid_a', 'wxid_b'], ('txt',))
         self.assertEqual(result['failed'], 2)
-        self.assertNotIn('SECRET CHAT CONTENT', Path(result['index_json']).read_text(encoding='utf-8-sig'))
-        self.assertFalse((Path(result['output_dir']) / '.partial').exists())
+        self.assertNotIn('SECRET CHAT CONTENT', json.dumps(result, ensure_ascii=False))
+        self.assertEqual(list(Path(result['output_dir']).iterdir()), [])
 
     def test_repeated_task_does_not_overwrite_previous_export(self):
         first = self.run_export(['wxid_a'])
         second = self.run_export(['wxid_a'], ('txt',))
-        self.assertNotEqual(first['output_dir'], second['output_dir'])
+        self.assertEqual(first['output_dir'], second['output_dir'])
+        self.assertNotEqual(first['chats'][0]['txt'], second['chats'][0]['txt'])
         self.assertTrue(Path(first['chats'][0]['json']).is_file())
 
     def test_options_reject_no_format_and_invalid_ids_before_connecting(self):
@@ -196,6 +199,15 @@ class SelectedExportTests(unittest.TestCase):
         attachments = {m['media']['kind']: m['media']['path'] for m in data['messages'] if m['media']}
         self.assertEqual((Path(chat['output_dir']) / attachments['file']).read_bytes(), file.read_bytes())
         self.assertEqual((Path(chat['output_dir']) / attachments['image']).read_bytes(), thumb.read_bytes())
+        self.assertTrue(all(p.startswith('同名_media/') for p in attachments.values()))
+        markdown = Path(chat['md']).read_text(encoding='utf8')
+        links = re.findall(r'(?:src="|\]\()([^"\)]+)', markdown)
+        self.assertEqual(len(links), 2)
+        for link in links:
+            self.assertTrue((Path(chat['output_dir']) / unquote(link)).is_file())
+        text = Path(chat['txt']).read_text(encoding='utf-8-sig')
+        for relative in attachments.values():
+            self.assertIn(relative, text)
 
     def test_real_pinned_self_info_method_does_not_leave_sqlite_handles_open(self):
         opened = []
@@ -214,16 +226,6 @@ class SelectedExportTests(unittest.TestCase):
         for conn in opened:
             with self.assertRaises(sqlite3.ProgrammingError):
                 conn.execute('SELECT 1')
-
-    def test_persistent_summary_failure_returns_retained_paths_and_keeps_marker(self):
-        import export_task_service as service
-        with patch.object(service, '_write_summary', side_effect=OSError('SECRET BODY')):
-            result = self.run_export(['wxid_a'])
-        self.assertEqual(result['exported'], 1)
-        self.assertTrue(Path(result['chats'][0]['txt']).is_file())
-        self.assertTrue((Path(result['output_dir']) / 'INCOMPLETE.txt').is_file())
-        self.assertTrue(result.get('summary_error'))
-        self.assertNotIn('SECRET BODY', result['summary_error'])
 
     def test_cancel_during_constructor_skips_all_metadata_work(self):
         import export_task_service as service
