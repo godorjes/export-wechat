@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from collections import deque
 import os
 from pathlib import Path
 import queue
@@ -92,6 +93,7 @@ class App(tk.Tk):
         self._poll_id = self._discover_id = None
         self._settings_guard = False
         self.settings_controls = []
+        self.task_log = deque(maxlen=1200)
         self.destinations = destination_folders()
         self.out = tk.StringVar(value=str(Path(app_directory) / 'exports') if app_directory else next(iter(self.destinations.values())))
         self.source = tk.StringVar()
@@ -158,15 +160,12 @@ class App(tk.Tk):
         format_section = tk.Frame(opts, background=WHITE)
         format_section.grid(row=0, column=0, sticky='ew', pady=(0, 19))
         format_section.columnconfigure(0, weight=1)
-        label(format_section, '保存格式（可多选）', small=True, bold=True, color='#41505c').grid(row=0, column=0, sticky='w', pady=(0, 8))
-        formats = tk.Frame(format_section, background=WHITE)
-        formats.grid(row=1, column=0, sticky='ew')
-        self.format_checks = {}
-        for fmt, text in (('txt', 'TXT'), ('md', 'Markdown'), ('json', 'JSON')):
-            check = ttk.Checkbutton(formats, text=text, variable=self.format_vars[fmt])
-            check.pack(side='left', padx=(0, 8))
-            self.format_checks[fmt] = check
-            self.settings_controls.append((check, 'normal'))
+        label(format_section, '保存格式', small=True, bold=True, color='#41505c').grid(row=0, column=0, sticky='w', pady=(0, 8))
+        _, self.format_combo = combo_field(format_section, None, ('txt', 'md', 'json'), width=1,
+                                          variables=self.format_vars,
+                                          labels={'txt': 'TXT', 'md': 'Markdown', 'json': 'JSON'})
+        self.format_combo.grid(row=1, column=0, sticky='ew')
+        self.settings_controls.append((self.format_combo, 'readonly'))
         label(format_section, variable=self.format_help, small=True, color='#99a4ac').grid(row=2, column=0, sticky='w', pady=(7, 0))
         self.content_combo = self._setting_field(opts, 1, '包含哪些内容', self.content_choice,
                             ('仅聊天文字（推荐）', '文字和图片', '文字、图片和普通文件', '文字和普通文件'), self.content_help)
@@ -218,13 +217,11 @@ class App(tk.Tk):
         state_label.grid(row=2, column=0, sticky='ew', padx=22, pady=(11, 3))
         action.bind('<Configure>', lambda event: task_label.configure(wraplength=max(120, event.width-5)))
         footer.bind('<Configure>', lambda event: state_label.configure(wraplength=max(160, event.width-44)))
-        link_button(footer, '查看任务详情', self.show_details, color='#96a2a9').grid(row=3, column=0, pady=(0, 5))
         self.footer_status = label(self, variable=self.source_status, small=True, color='#96a2a9',
                                   background=BG, wraplength=1050, justify='center')
         self.footer_status.configure(anchor='center')
         self.footer_status.grid(row=2, column=0, sticky='ew', padx=34, pady=(0, 16))
         self.bind('<Configure>', self._window_resized, add='+')
-        self._create_details_panel()
         for var in self.format_vars.values():
             var.trace_add('write', self.sync_formats)
         self.images.trace_add('write', self.sync_content)
@@ -297,34 +294,11 @@ class App(tk.Tk):
                              export_images=self.images.get(), export_files=self.files.get(),
                              db_dir=self.loaded_source)
 
-    def _create_details_panel(self):
-        self.details_panel = panel = tk.Toplevel(self, background=WHITE)
-        panel.withdraw()
-        panel.title('任务详情')
-        panel.geometry('720x440')
-        panel.minsize(540, 300)
-        panel.transient(self)
-        panel.columnconfigure(0, weight=1)
-        panel.rowconfigure(1, weight=1)
-        label(panel, '进度与结果', bold=True).grid(row=0, column=0, sticky='w', padx=20, pady=14)
-        self.log_text = tk.Text(panel, height=10, wrap='word', state='disabled', font=('Microsoft YaHei UI', 9),
-                                background='#f8faf9', foreground='#53616e', relief='flat', borderwidth=0,
-                                padx=12, pady=10)
-        self.log_text.grid(row=1, column=0, sticky='nsew', padx=(20, 0), pady=(0, 20))
-        scroll = ttk.Scrollbar(panel, command=self.log_text.yview)
-        scroll.grid(row=1, column=1, sticky='ns', padx=(0, 20), pady=(0, 20))
-        self.log_text.configure(yscrollcommand=scroll.set)
-        panel.protocol('WM_DELETE_WINDOW', panel.withdraw)
-
-    def show_details(self):
-        self.details_panel.deiconify()
-        self.details_panel.lift()
-
     def show_help(self):
         messagebox.showinfo('使用帮助', '1. 先在电脑上登录微信，点击“检测微信账号”读取可用数据。\n\n'
                             '2. 勾选需要的聊天，勾选一种或多种保存格式，选择内容和位置。\n\n'
                             '3. 点击导出，完成后打开文件夹查看结果。\n\n'
-                            '导出过程可取消；任务详情中可查看失败原因和缓存清理结果。', parent=self)
+                            '导出过程可取消；失败原因会在任务状态处显示。', parent=self)
 
     def destroy(self):
         for token in (self._poll_id, self._discover_id):
@@ -333,13 +307,7 @@ class App(tk.Tk):
         super().destroy()
 
     def log(self, text):
-        self.log_text.configure(state='normal')
-        self.log_text.insert('end', str(text) + '\n')
-        # Keep live log bounded, even for very large batches.
-        if int(self.log_text.index('end-1c').split('.')[0]) > 1200:
-            self.log_text.delete('1.0', '201.0')
-        self.log_text.see('end')
-        self.log_text.configure(state='disabled')
+        self.task_log.append(str(text))
 
     def update_buttons(self):
         if not hasattr(self, 'chat_list'):
@@ -415,7 +383,7 @@ class App(tk.Tk):
                         if kind == 'done' and callback:
                             callback(result)
                         elif kind == 'error':
-                            self.state.set('任务失败，可重试')
+                            self.state.set('任务失败：'+result)
                             self.log(result)
                             if task_kind in {'sources', 'list'}:
                                 self.detecting = False
@@ -563,7 +531,11 @@ class App(tk.Tk):
         if result.get('error'):
             self.log(result['error'])
         if not result.get('sensitive_cache_cleanup') or result.get('partial_cleanup_error'):
-            self.log('部分临时文件未完全清理，请查看任务详情并关闭程序后重试清理。')
+            self.log('部分临时文件未完全清理，请关闭占用程序后重试清理。')
+            self.state.set(self.state.get()+'；部分临时文件未清理，请关闭占用程序后重试。')
+        error = result.get('error') or next((c.get('error') for c in result['chats'] if c.get('error')), None)
+        if error and result['state'] in {'failed', 'completed_with_errors'}:
+            self.state.set(self.state.get()+'：'+error)
         self.log('结果目录：' + result['output_dir'])
         self.open_btn.configure(state='normal')
 

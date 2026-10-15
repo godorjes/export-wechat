@@ -156,13 +156,11 @@ def link_button(parent, text, command=None, *, state='normal', color=GREEN_DARK)
                      disabledforeground='#a4aeb5', cursor='hand2', highlightthickness=0, padx=0, pady=4)
 
 
-def combo_field(parent, variable, values, *, width=24, readonly=True):
-    shell = RoundedCard(parent, height=42, radius=9, inset=(9, 5), shadow=False,
-                        background=parent.cget('background'), width=width*9)
-    control = ttk.Combobox(shell.body, textvariable=variable, values=values, width=width,
-                           state='readonly' if readonly else 'normal')
-    control.pack(fill='both', expand=True)
-    return shell, control
+def combo_field(parent, variable, values, *, width=24, readonly=True, variables=None, labels=None):
+    from ui.dropdown import Dropdown
+    control = Dropdown(parent, variable, values, width=width, variables=variables, labels=labels,
+                       state='readonly' if readonly else 'normal')
+    return control, control
 
 
 class ScrollFrame(tk.Frame):

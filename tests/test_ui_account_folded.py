@@ -29,13 +29,14 @@ class AccountFoldedTests(unittest.TestCase):
             time.sleep(.01)
         self.assertFalse(self.app.busy)
 
-    def format_checks(self):
-        def walk(widget):
-            yield widget
-            for child in widget.winfo_children():
-                yield from walk(child)
-        return {w.cget('text'): w for w in walk(self.app.settings_body)
-                if w.winfo_class() == 'TCheckbutton' and w.cget('text') in {'TXT', 'Markdown', 'JSON'}}
+    def toggle_format(self, fmt):
+        control = self.app.format_combo
+        if control.popup is None:
+            control.invoke()
+            self.app.update()
+        index = ('txt', 'md', 'json').index(fmt)
+        control.popup_canvas.event_generate('<ButtonRelease-1>', x=30, y=6+index*40+20)
+        self.app.update()
 
     def test_settings_are_visible_before_export_and_after_selecting_chat(self):
         app = self.app
@@ -64,9 +65,8 @@ class AccountFoldedTests(unittest.TestCase):
         app.source_ready = True
         app.update_buttons()
         app.update()
-        checks = self.format_checks()
-        self.assertTrue(checks['TXT'].winfo_viewable())
-        checks['TXT'].focus_force()
+        self.assertTrue(app.format_combo.winfo_viewable())
+        app.format_combo.focus_force()
         app.update()
         for _ in range(30):
             focused = app.focus_get()
@@ -80,7 +80,7 @@ class AccountFoldedTests(unittest.TestCase):
         self.assertLessEqual(app.browse_output_btn.winfo_rooty()+app.browse_output_btn.winfo_height(),
                              app.settings_canvas.winfo_rooty()+app.settings_canvas.winfo_height())
 
-    def test_primary_format_checkboxes_drive_real_multi_format_export(self):
+    def test_format_dropdown_drives_real_multi_format_export(self):
         import exporter_core as core
         from test_selected_export import fixture_db
         app = self.app
@@ -91,11 +91,11 @@ class AccountFoldedTests(unittest.TestCase):
             chats, unresolved = core._batch_chat_candidates(db)
             app.list_loaded({'chats': chats, 'unresolved_message_tables': unresolved,
                              'account_dir': db.account_dir, 'sensitive_cache_cleanup': True})
-            checks = self.format_checks()
-            self.assertTrue(all(w.winfo_viewable() for w in checks.values()))
-            checks['TXT'].invoke()
-            checks['Markdown'].invoke()
-            checks['JSON'].invoke()
+            self.assertTrue(app.format_combo.winfo_viewable())
+            self.toggle_format('txt')
+            self.toggle_format('md')
+            self.toggle_format('json')
+            app.format_combo.close_popup()
             app.content_combo.set('文字、图片和普通文件')
             app.content_combo.event_generate('<<ComboboxSelected>>')
             app.out.set(str(root / 'custom output'))
@@ -120,11 +120,11 @@ class AccountFoldedTests(unittest.TestCase):
             actions = [w.cget('text') for w in app.result_buttons.winfo_children()
                        if w.winfo_viewable()]
             self.assertEqual(actions, ['打开文件夹'])
-            checks['Markdown'].invoke()
-            checks['JSON'].invoke()
+            self.toggle_format('md')
+            self.toggle_format('json')
             self.assertEqual(app.export_btn.cget('state'), 'disabled')
             self.assertIn('至少选择', app.format_help.get())
-            checks['TXT'].invoke()
+            self.toggle_format('txt')
             self.assertEqual(app.get_export_options().formats, ('txt',))
             self.assertEqual(app.export_btn.cget('state'), 'normal')
 
@@ -135,9 +135,9 @@ class AccountFoldedTests(unittest.TestCase):
         self.assertTrue(app.launch('probe', lambda: gate.wait(2), lambda _: None))
         try:
             self.assertEqual(str(app.account_btn.cget('state')), 'disabled')
-            checks = self.format_checks()
-            self.assertTrue(all(str(w.cget('state')) == 'disabled' for w in checks.values()))
-            checks['JSON'].invoke()
+            self.assertEqual(app.format_combo.cget('state'), 'disabled')
+            app.format_combo.invoke()
+            self.assertIsNone(app.format_combo.popup)
             self.assertFalse(app.format_vars['json'].get())
             self.assertEqual(str(app.content_combo.cget('state')), 'disabled')
             self.assertEqual(str(app.chat_list.select_all_btn.cget('state')), 'disabled')
@@ -146,7 +146,7 @@ class AccountFoldedTests(unittest.TestCase):
         finally:
             gate.set()
             self.wait_for_task()
-        self.assertTrue(all(str(w.cget('state')) == 'normal' for w in checks.values()))
+        self.assertEqual(app.format_combo.cget('state'), 'readonly')
         self.assertEqual(str(app.account_btn.cget('state')), 'normal')
 
     def test_canvas_list_toggles_visible_selection_and_handles_large_lists(self):
