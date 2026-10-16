@@ -16,12 +16,11 @@
 
 ## 下载和打开
 
-1. 打开本仓库的 [下载页面（GitHub Actions）](https://github.com/godorjes/export-wechat/actions/workflows/build-windows.yml)。
-2. 找到最近一次带绿色勾号的构建，进入后滑到页面底部的 **Artifacts** 下载区。
-3. 日常备份选择 **Export-WeChat-V1-core-Windows**，下载后解压。
-4. 双击 **Export-WeChat-V1.exe** 打开程序。不需要安装 Python，也不用输入命令。
+**[点击下载 Windows 核心版 ZIP（推荐）](https://github.com/godorjes/export-wechat/actions/runs/38901670058/artifacts/12046586793)**
 
-下载构建产物需要登录 GitHub；如果页面没有下载区，先确认所选构建已经成功完成。完整包与核心包的区别见下方开发说明。
+下载后解压，双击 **Export-WeChat-V1.exe** 打开程序。不需要安装 Python，也不用输入命令。
+
+下载需要登录 GitHub。其他版本和后续构建可在 [GitHub Actions 下载页面](https://github.com/godorjes/export-wechat/actions/workflows/build-windows.yml) 查看；完整包与核心包的区别见下方开发说明。
 
 ## 怎么导出
 
