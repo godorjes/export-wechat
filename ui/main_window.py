@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 from collections import deque
 import os
 from pathlib import Path
@@ -17,9 +16,10 @@ from chat_list_service import list_chats
 from export_task_service import CancelToken, ExportOptions, export_selected_chats, safe_error
 from wechat_data_dirs import _account_dirs, discover_wechat_data_dirs
 from ui.chat_list import ChatList
+from ui.branding import set_app_icon
 from ui.theme import (BG, WHITE, INK, MUTED, LINE, GREEN, GREEN_DARK, FIELD, RoundedCard, RoundedButton,
                       ScrollFrame, combo_field, configure_theme, destination_folders,
-                      label, link_button, rounded_rect, draw_icon, icon_tile, pill, heading_dot,
+                      label, link_button, draw_icon, icon_tile, pill, heading_dot,
                       style_native_titlebar)
 
 
@@ -68,18 +68,13 @@ def read_detected_sources(sources, progress=None, stopped=None):
 
 
 class App(tk.Tk):
-    def __init__(self, auto_load=True, app_directory=None, icon=None):
+    def __init__(self, auto_load=True, app_directory=None):
         super().__init__()
         self.title('微信聊天记录导出 V1.0')
         self.geometry('1280x820')
         self.minsize(980, 640)
         configure_theme(self)
-        if icon:
-            try:
-                self._icon = tk.PhotoImage(data=base64.b64decode(icon))
-                self.iconphoto(True, self._icon)
-            except tk.TclError:
-                pass
+        set_app_icon(self)
         self.q = queue.Queue()
         self.busy = False
         self.worker_thread = None
@@ -120,9 +115,7 @@ class App(tk.Tk):
         header.columnconfigure(1, weight=1)
         mark = tk.Canvas(header, width=62, height=64, background=WHITE, highlightthickness=0, takefocus=False)
         mark.grid(row=0, column=0, rowspan=2, padx=(0, 18))
-        rounded_rect(mark, 1, 4, 61, 63, 17, fill='#d9f4e9', outline='')
-        rounded_rect(mark, 1, 1, 61, 61, 17, fill=GREEN, outline='')
-        draw_icon(mark, 'wechat', 13, 12, 36, WHITE)
+        mark.create_image(31, 32, image=self._brand_images[60])
         title_row = tk.Frame(header, background=WHITE)
         title_row.grid(row=0, column=1, sticky='w')
         tk.Label(title_row, text='微信聊天记录导出', background=WHITE, foreground=INK,

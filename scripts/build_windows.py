@@ -44,7 +44,8 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     cmd = [sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean',
            '--' + a.layout, '--windowed', '--name', name, '--icon', str(ROOT / 'assets/app.ico'),
-           '--distpath', str(dist), '--workpath', str(work), '--specpath', str(work)]
+           '--distpath', str(dist), '--workpath', str(work), '--specpath', str(work),
+           '--add-data', str(ROOT / 'assets') + ';assets']
     modules = ['wechatauto', 'winsdk', 'uiautomation', 'comtypes', 'imageio_ffmpeg']
     if a.profile == 'full':
         modules += ['sherpa_onnx', 'soundfile']
