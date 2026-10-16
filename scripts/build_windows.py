@@ -69,6 +69,8 @@ def main():
         license_files.append('docs/DELIVERY.md')
     if (ROOT / 'docs/UI_ACCOUNT_FOLDED.md').is_file():
         license_files.append('docs/UI_ACCOUNT_FOLDED.md')
+    if (ROOT / 'docs/UPSTREAM_V1_4_0.md').is_file():
+        license_files.append('docs/UPSTREAM_V1_4_0.md')
     archive = dist / f'{name}-{a.layout}-Windows.zip'
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as z:
         files = [package] if package.is_file() else package.rglob('*')

@@ -1,469 +1,183 @@
 # Windows 微信聊天记录导出工具 V1.0
 
-基于 [zhuzhangxue/wechat-chat-export v1.4.0](https://github.com/zhuzhangxue/wechat-chat-export) 的增量二次开发，沿用原数据库读取、分片发送者解析和媒体导出引擎。
+把电脑上的微信聊天记录保存成文件，方便自己备份、查找，或交给其他工具整理。
 
-登录微信 → 检测微信账号 → 加载好友与群聊 → 搜索勾选 → 选择格式/附件 → 后台批量导出 → 查看结果。
+选中要保存的好友或群聊，选好格式和文件夹，就能开始导出。聊天内容保存在自己的电脑上，本工具不会上传聊天记录。
 
-- 按稳定 username 选择，重名好友不会混淆；搜索备注、昵称和群名，跨筛选保留勾选。
-- 右上角检测按钮及旁边文字同步显示未识别、检测中和已识别状态；检测中禁止重复点击，成功后可重新检测。圆点只在账号数据成功读取后变绿，不把本地目录或运行中的进程当作登录证明。
-- 右侧设置直接可见；保存格式使用下拉多选，默认 TXT，可在弹出列表连续勾选 TXT / Markdown / JSON，收起后显示已选格式。好友/群聊筛选、导出内容和保存格式统一使用圆角下拉样式。
-- 内容默认仅文字，可加图片或普通文件；保存位置为一个可编辑路径和原生文件夹选择按钮，默认路径沿用此前版本。
-- 导出期间显示“导出中…”并可取消，失败原因在现有状态区提示，不提供任务详情弹窗。导出文件直接位于 yyyy-MM-ddWeChatExport 目录，不写任务汇总文件；重名/再次导出自动加序号，已完成记录保留。
-- 本地运行、原数据库只读，无聊天上传；敏感缓存继承原隔离/清理机制。
-- Tkinter + ttk 原生双栏卡片界面；新版界面已移除聊天记录预览，导出完成后可打开结果文件夹。原 GUI 可通过 --legacy 启动。
-- 界面按提供的参考图采用白色页头、浅灰蓝背景、状态胶囊、三个图标设置卡片及浅色聊天头像；账号、聊天及导出状态仍来自实际数据，默认导出参数保持不变。
+## 能做什么
 
-界面与导出结构说明、修改文件清单和验证记录见 [界面改版](docs/UI_ACCOUNT_FOLDED.md)。
+- 一次选择一个或多个好友、群聊，也可以全选当前列表。
+- 按聊天名称、备注或昵称搜索，切换筛选后保留已勾选的聊天。
+- 保存为 TXT、Markdown 或 JSON，可以同时选择多种格式。
+- 除了文字，还可以一起保存本机仍有缓存的图片和普通文件。
+- 导出完成后直接打开文件夹；同名文件自动加序号，避免覆盖已有记录。
 
-目标为 Windows 10/11 x64、微信 4.1.15.13。合成 SQLite 测试不代表真实微信验收；真实账号验证清单见 [运行与验收](docs/ACCEPTANCE.md)。
+目前主要适配 **Windows 10 / 11 64 位、Windows 微信 4.1.15.13**。使用前先登录电脑微信，并保持微信运行。
 
-## 获取 EXE
+## 下载和打开
 
-推送后的 [GitHub Actions](https://github.com/godorjes/export-wechat/actions) 会构建核心和完整单文件包。下载 Windows artifact ZIP 并解压，双击 Export-WeChat-V1.exe。核心包移出可选 ASR，完整包保留旧语音识别依赖；FFmpeg 和 rust-silk 两者都保留。
+1. 打开本仓库的 [下载页面（GitHub Actions）](https://github.com/godorjes/export-wechat/actions/workflows/build-windows.yml)。
+2. 找到最近一次带绿色勾号的构建，进入后滑到页面底部的 **Artifacts** 下载区。
+3. 日常备份选择 **Export-WeChat-V1-core-Windows**，下载后解压。
+4. 双击 **Export-WeChat-V1.exe** 打开程序。不需要安装 Python，也不用输入命令。
 
-## 源码运行和测试
+下载构建产物需要登录 GitHub；如果页面没有下载区，先确认所选构建已经成功完成。完整包与核心包的区别见下方开发说明。
+
+## 怎么导出
+
+1. **检测账号**：打开程序后会自动检测，也可以点击右上角的「检测微信账号」或「重新检测」。显示「已识别微信账号」后，就能看到聊天列表。检测中请等待按钮恢复。
+2. **选择聊天**：在左侧勾选好友或群聊。可以搜索，也可以切换「全部 / 好友 / 群聊」后全选当前列表。
+3. **选择保存格式**：点击右侧「保存格式」下拉框，勾选需要的格式。可以多选，默认只保存 TXT。
+4. **选择导出内容**：默认只保存文字，需要时再选择图片或普通文件。
+5. **选择保存位置**：点击「选择」挑选文件夹，也可以直接修改输入框里的路径。
+6. **开始导出**：点击底部导出按钮。导出时显示「导出中…」，需要停止时点击「取消导出」。完成后点击「打开文件夹」查看结果。
+
+三种格式怎么选：
+
+| 格式 | 适合什么情况 |
+| --- | --- |
+| TXT（推荐） | 想直接打开看文字、搜索内容，或交给其他工具整理。 |
+| Markdown | 想保留排版，用支持 Markdown 的软件阅读。 |
+| JSON | 准备用脚本或程序继续处理聊天数据。 |
+
+## 导出的文件在哪里
+
+程序会在你选择的位置下，按当天日期建立一个文件夹，例如 `2026-10-16WeChatExport`。聊天文件直接放在里面，不会再给每个聊天套一层文件夹。
+
+以保存 TXT 为例：
+
+```text
+你选择的文件夹/
+└─ 2026-10-16WeChatExport/
+   ├─ 小林.txt
+   ├─ 家人群.txt
+   └─ 小林 (2).txt
+```
+
+选择多种格式时，会同时生成对应的 `.md`、`.json` 文件；附件保存在对应聊天的 `聊天名_media` 文件夹中。已有同名记录时会加上 `(2)`、`(3)` 等序号，之前导出的文件会保留。
+
+如果直接选择了当天的 `yyyy-MM-ddWeChatExport` 文件夹，记录就保存到这个文件夹中，不再重复建立同名目录。
+
+## 常见问题
+
+**没有识别到账号怎么办？**
+
+先确认电脑微信已经登录，再点「重新检测」。看到本地数据文件夹不代表一定能读取账号；微信版本变化、数据目录变动或文件权限问题都可能导致检测失败。多次检测仍失败时，可以把界面上的提示反馈到 [Issues](https://github.com/godorjes/export-wechat/issues)。
+
+**为什么有些图片或文件没有导出来？**
+
+本工具只能保存这台电脑上仍有缓存的附件。已经清理、删除或从未下载到本机的内容，无法通过本工具找回。
+
+**导出很久没有显示百分比，正常吗？**
+
+目前会显示「导出中…」，不会显示估算百分比。聊天很多、记录很长或勾选了附件时，处理时间会更长。取消后已经完成的聊天文件会保留。
+
+**导出的内容能直接发给别人吗？**
+
+文件中包含真实聊天内容，请先检查再分享。反馈问题时也不要上传聊天数据库、密钥或完整的私人聊天记录。
+
+---
+
+## 开发说明
+
+下面是源码运行、命令行和打包说明。只使用 EXE 的用户可以跳过。
+
+### 环境与源码运行
+
+推荐 Python 3.12。主界面使用 Tkinter / ttk，不需要额外的浏览器或前端运行环境。
 
 ```powershell
 python -m pip install -r requirements-core.txt
 python app.py
-python -m unittest discover -s tests -p "test_*.py"
 ```
 
-完整旧功能依赖安装 requirements.txt。
+当前主界面提供聊天选择、格式多选、文字及图片/普通文件导出。历史界面与旧命令行保留原有的语音、视频、本地语音转文字等入口；需要这些功能时安装完整依赖：
+
+```powershell
+python -m pip install -r requirements.txt
+python app.py --legacy
+```
+
+主界面及窗口图标共用 `assets/app.png`；EXE 的 Windows 图标使用 `assets/app.ico`。构建时会将 assets 一并打包。
+
+### 命令行
+
+先列出可读取聊天的稳定 `username`，再选择需要导出的账号 ID：
 
 ```powershell
 python cli.py --list-chats --db-dir "D:\微信数据\xwechat_files\wxid_xxx"
 python cli.py --username wxid_a --username wxid_b --format txt --format json --images --files --out "D:\聊天导出"
-python cli.py --all --format md
+python cli.py --all --format md --out "D:\聊天导出"
 ```
 
-原昵称入口与原 --all / --limit 入口仍可用。新批量 CLI 可按 Ctrl+C 协作取消。
+`--username` 和 `--format` 可以重复传入。按 username 选择及 `--all --format` 使用与新界面相同的平铺日期目录；可按 Ctrl+C 请求协作取消。
 
-## 构建
+原昵称入口及不带 `--format` 的 `--all / --limit` 入口保留历史行为，包括原来的会话子目录和批量索引。`--limit` 不适用于新的按格式选择入口：
 
 ```powershell
+python cli.py "好友备注名或群名" --db-dir "D:\微信数据"
+python cli.py --all --limit 20
+```
+
+### 数据读取与临时缓存
+
+- 聊天选择使用稳定 `username`，不依赖显示名区分同名联系人；仅导出能可靠对应到本地消息表的会话。
+- 底层依赖精确锁定为 `wechatauto-replica==1.2.4.4`。发送者按消息来源分片解析，不用昵称或数字 ID 猜测「我」；无法确认的发送者保留不确定状态。
+- 每次数据库会话使用隔离的 `%TEMP%\wechat-chat-export-sensitive\run-*` 工作目录；数据库密钥副本、图片密钥和解密数据库缓存重定向到该目录，结束后尝试清理。
+- 启动和新导出前会检查本项目自己的失效缓存：活动进程的目录跳过，无标记旧目录超过 24 小时后才自动清理。
+- 强制结束进程、断电或文件占用仍可能留下敏感临时文件。显式清理命令如下；它也会尝试清理可能被其他工具共用的旧 `%TEMP%\wechatauto_db`，执行前请关闭这些工具：
+
+```powershell
+python cli.py --clear-sensitive-cache
+```
+
+正常导出只读取原始微信数据库，结果写入用户选择的目录；缓存清理不删除原始数据库或已完成的导出文件。
+
+### 语音与媒体
+
+核心包和完整包都包含 FFmpeg 与固定版本的 rust-silk 解码器。核心包不包含可选的 ASR 运行时；完整包保留 sherpa-onnx / soundfile 等语音识别依赖，供旧界面或命令行使用。
+
+完整环境下可按需安装解码器和本地语音模型：
+
+```powershell
+python cli.py --install-rust-silk
+python cli.py --install-asr
+python cli.py "好友备注名或群名" --transcribe-voices
+```
+
+SenseVoice 模型不会打进 EXE，首次安装会下载并校验。识别在本机完成，默认模型目录为 `%LOCALAPPDATA%\WeChat-Chat-Export-for-LLM\models\sensevoice`，转写缓存位于同一应用目录的 `cache\voice_asr_cache.json`。
+
+媒体只使用能可靠匹配的本地缓存；视频号等特殊消息的限制、JSON 扩展字段和历史行为见 [原版技术说明](docs/UPSTREAM_V1_4_0.md)。
+
+### 测试与 Windows 构建
+
+```powershell
+python -m unittest discover -s tests -p "test_*.py"
 python -m pip install -r requirements.txt -r requirements-build.txt
 python scripts/build_windows.py --profile core --layout onefile
 python scripts/build_windows.py --profile full --layout onefile
 python scripts/build_windows.py --profile core --layout onedir --distdir dist/onedir
 ```
 
-构建脚本校验固定 rust-silk SHA256，打包许可证与验收说明，并记录实际体积及构建时间。源码改动、基线和测试证据见 [代码审查](docs/CODE_AUDIT.md) 和 [交付报告](docs/DELIVERY.md)。
+GitHub Actions 会运行依赖契约检查、语法检查和完整单元测试，通过后构建核心/完整 Windows 单文件包并上传产物。构建脚本校验固定 rust-silk v0.1.3 的 SHA-256，打包许可证及说明文档，并记录实际体积、构建耗时和 EXE 摘要。
 
-Apache-2.0；保留原项目和 [第三方声明](THIRD_PARTY_NOTICES.md)。请仅处理自己有权访问的数据，不关闭安全保护。
+Dependabot 负责检查依赖更新；升级仍需经过 Windows CI 和人工审核，不自动合并或发布。
 
----
+合成 SQLite 和界面测试不等于真实微信验收。相关开发记录：
 
-# 上游 v1.4.0 说明（旧界面和原 CLI）
+- [运行与验收](docs/ACCEPTANCE.md)
+- [界面与导出结构说明](docs/UI_ACCOUNT_FOLDED.md)
+- [代码审查](docs/CODE_AUDIT.md)
+- [交付报告](docs/DELIVERY.md)
 
-# 微信聊天记录导出
+## 项目来源与致谢
 
-把 Windows 微信 4.1.12+ 的聊天记录导出为 TXT、Markdown 和 JSON，方便交给 GPT、Claude、Gemini 等大模型读取，也可以自己留存、检索或继续处理。
+本项目基于 [zhuzhangxue/wechat-chat-export v1.4.0](https://github.com/zhuzhangxue/wechat-chat-export) 进行增量二次开发，沿用原数据库读取、分片发送者解析和媒体导出引擎，并针对当前桌面界面、聊天选择及导出方式进行调整。
 
-如果这个工具对你有帮助，欢迎点个 Star。
+感谢原项目及其贡献者，也感谢 [fanyuantaier/wechatauto-replica](https://github.com/fanyuantaier/wechatauto-replica) 提供底层读取和媒体处理能力。原版说明及贡献记录保留在 [原版 v1.4.0 文档](docs/UPSTREAM_V1_4_0.md)，第三方组件和许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-目前源码版本：**v1.4.0**
+## 许可证与声明
 
-支持私聊和群聊，可处理文字、长文本、引用回复、系统消息，并尽量导出本机仍有缓存的图片、文件、语音和视频。v1.4.0 起支持一次导出本机全部可可靠识别的聊天。
+采用 [Apache License 2.0](LICENSE)，保留原项目及第三方声明。
 
-## 下载
-
-稳定版本：
-
-[GitHub Releases](https://github.com/zhuzhangxue/wechat-chat-export/releases)
-
-如果 Release 还没更新，也可以到：
-
-[GitHub Actions](https://github.com/zhuzhangxue/wechat-chat-export/actions)
-
-下载最新一次 `Build Windows EXE` 的 artifact。
-
-Windows 版是单文件 EXE，不需要另外安装 Python。
-
-目前没有商业代码签名证书，第一次运行时可能遇到 Windows SmartScreen 提示。仓库源码和构建脚本都是公开的，不需要为了运行本工具关闭 Defender、SmartScreen 或添加安全软件排除项。
-
-## 使用
-
-先登录 Windows 微信，并保持微信在后台运行。
-
-打开程序后：
-
-1. 输入好友的准确备注、昵称或群名；
-2. 选择是否附带导出图片、文件、语音、视频；
-3. 如有需要，指定微信数据目录；
-4. 点击「开始导出」。
-
-导出结果类似：
-
-```text
-exports/
-└─ 某个聊天/
-   ├─ chat_full_for_llm.txt
-   ├─ chat_full_for_llm.md
-   ├─ chat_full_parsed.json
-   └─ media/
-      ├─ images/
-      ├─ files/
-      ├─ voices/
-      └─ videos/
-```
-
-其中：
-
-- `TXT`：最适合直接交给大模型；
-- `Markdown`：方便自己阅读，图片可直接显示；
-- `JSON`：保留更多结构，适合脚本和二次开发。
-
-程序还带有简单的聊天预览，可以直接查看文字和图片，并通过 Windows 默认程序打开文件、语音和视频。
-
-导出成功后可以直接点击「打开聊天预览」查看刚刚导出的聊天；「预览已有聊天」则始终可用，可以随时选择以前的聊天导出文件夹重新打开预览。
-
-发送者身份按消息来源分片的 `Name2Id` 解析，再映射显示名；只有稳定账号 `username` 与本机账号一致才显示为“我”，不根据数字 ID 或昵称猜测。私聊映射到双方以外的账号、缺少映射等情况会显示“未知发送者”并在导出日志中汇总警告。群聊只剥离与已解析发送者 ID 一致的正文前缀，无法确认时保留原文。
-
-JSON 保留原有字段，并增加每条消息的 `source_db`、`real_sender_id`、`server_id`、`sender_username`、`is_self`（无法判断时为 `null`）、`sender_status`，以及顶层的 `sender_resolution_counts`，便于本地复查。无法确认本机账号时不判断“我”，解析状态会标记不确定。
-
-v1.3.3 修复了旧版本在跨多个消息数据库分片导出时可能出现的发送者名称错误映射。如果你曾使用 v1.3.2 或更早版本导出大量历史记录，建议使用 v1.3.3 重新导出。旧导出不会自动更新，重新导出时建议选择新的输出目录，避免覆盖旧结果。
-
-## 导出全部聊天
-
-v1.4.0 起，可以一次导出本机所有**能够从本地消息表可靠识别身份**的私聊和群聊。
-
-GUI 点击「导出全部聊天」。命令行使用：
-
-```powershell
-python cli.py --all
-```
-
-如果第一次只想小范围验证，可以优先导出最近的 20 个会话：
-
-```powershell
-python cli.py --all --limit 20
-```
-
-批量导出与单个会话导出的原则一致：
-
-- 只读取本机微信数据，不联网补齐聊天内容或媒体；
-- 只把实际存在 `Msg_<md5>` 本地消息表的对象视为“聊天”，不会为了凑“全部”去逐个尝试从未聊过的联系人；
-- 只有能够从本机 `contact.db` / `session.db` 可靠反查到稳定 `username` 的消息表才会导出；无法确认身份的表会统计并跳过，不猜测联系人；
-- 系统号、公众号等非普通私聊默认排除；
-- 最近有会话时间的聊天优先处理，`--limit` 因此适合试跑；
-- 单个会话失败不会中断整个批次，失败原因会写进总索引；
-- 整批只创建一次数据库连接和敏感临时工作目录，并复用账号级昵称、图片解密配置/密钥、文件缓存索引和本地 ASR 模型。
-
-输出根目录会增加：
-
-```text
-exports/
-├─ all_chats_index.md
-├─ all_chats_index.json
-├─ wxid_xxx [稳定摘要]/
-│  ├─ chat_full_for_llm.txt
-│  ├─ chat_full_for_llm.md
-│  └─ chat_full_parsed.json
-└─ xxx@chatroom [稳定摘要]/
-   └─ ...
-```
-
-批量模式的会话文件夹**只由稳定 `username` 派生**，不由备注名、昵称或本次处理顺序决定。这样即使两个联系人同名，或者最近聊天顺序发生变化，多次导出也不会把不同人的历史结果写进同一个目录。可读的备注/昵称保留在总索引和每个会话的导出文件中。
-
-勾选图片、文件、语音或视频后，这些选项会应用到批次中的每个会话，可能明显增加运行时间和磁盘占用。建议第一次先用 `--limit` 试跑。
-
-## 微信数据目录
-
-默认情况下程序会自动定位微信数据目录，一般不用手动设置。
-
-如果自动探测选错了，或者电脑上存在多份微信数据，可以点击「微信数据目录」右侧的「选择」。
-
-程序会列出发现的候选目录，并显示：
-
-- 路径
-- 账号数量
-- 数据库最近修改时间
-- 发现来源
-
-候选会按数据库最近修改时间排序。找不到需要的目录时，也可以继续手动浏览。
-
-这在下面几种情况比较有用：
-
-- 微信数据迁移到了其他磁盘；
-- 电脑上登录过多个账号；
-- 存在旧的微信数据副本；
-- 导出的最新消息明显早于微信里实际看到的消息。
-
-下面这类路径都可以识别：
-
-```text
-D:\WeChatData
-D:\WeChatData\xwechat_files
-```
-
-不填写时仍然使用自动探测。
-
-命令行也可以手动指定：
-
-```powershell
-python cli.py "好友备注名或群名" --db-dir "D:\WeChatData"
-```
-
-## 敏感临时缓存
-
-v1.3.4 起，程序不会再直接使用 `wechatauto-replica` 默认的长期临时工作目录。每次导出都会创建独立的一次性工作目录，用于暂存数据库解密密钥、图片 AES key 和解密后的数据库缓存：
-
-```text
-%TEMP%\wechat-chat-export-sensitive\run-...
-```
-
-无论导出成功还是正常报错退出，程序都会尝试删除这整个一次性目录。这里的目标是避免敏感解密材料在导出完成后长期留在磁盘上。
-
-v1.3.5 起，项目把上游依赖升级并固定到 PyPI 的 `wechatauto-replica==1.2.4.4`。上游 1.2.2.2+ 默认会额外把稳定数据库密钥副本写到 `%LOCALAPPDATA%\wechatauto_keys`，账号自愈路径也可能重新使用 `%TEMP%\wechatauto_db`。本项目不会沿用这两个长期路径：导出期间会把 `WECHATAUTO_KEYS_DIR` 和上游临时根目录一起重定向到当前一次性的 `run-*` 目录，导出结束后随整个工作目录一起清理，并恢复原进程设置。这样可以获得上游 1.2.4.4 的数据库、图片和微信 4.1.15.x 兼容修复，同时不回退 v1.3.4 建立的敏感缓存安全边界。
-
-v1.4.0 起，导出期间还会临时关闭上游默认的相对路径文件日志，避免在源码目录或 EXE 旁留下 `wechatauto_logs/`。导出结束后会恢复上游进程设置；控制台日志不受影响。
-
-v1.4.0 同时兼容 `wechatauto-replica 1.2.4.4` 在部分中文 Windows + UTF-8 Python 环境下读取 `tasklist` 输出失败的问题：PID 探测在导出沙箱内使用明确的 Windows 编码，并在导出结束后恢复上游方法。
-
-如果你曾单独使用过 `wechatauto-replica`，它自己创建的 `%LOCALAPPDATA%\wechatauto_keys` 可能属于其他程序。本工具既不会自动读取，也不会自动删除那个目录，避免影响其它工具。
-
-GUI 启动和开始新导出时，还会自动检查本项目自己的 `%TEMP%\wechat-chat-export-sensitive\run-*` 残留。新版工作目录带有进程所有权标记：只有确认对应进程已经不存在的目录才会立即自动删除；仍有活动进程的目录会跳过。为兼容此前测试版留下的无标记目录，仅在目录超过 24 小时后自动清理。**自动清理不会触碰旧版共享的 `%TEMP%\wechatauto_db`。**
-
-这不是内存盘，也不是 DPAPI 加密：**导出正在运行时，这些临时数据仍可能以明文形式存在于当前 Windows 用户的临时目录中。** 如果进程被强制结束、系统断电，或文件被其他程序占用，仍可能留下残余缓存；下一次启动/导出会再次尝试清理本项目自己的失效残留。
-
-v1.3.3 及更早版本使用上游默认目录，旧缓存可能仍位于：
-
-```text
-%TEMP%\wechatauto_db\<账号>\
-```
-
-其中可能包含 `keys.json`、`image_keys.json` 和解密数据库缓存。
-
-GUI 中可以点击「清除敏感缓存」进行显式清理。命令行也可以使用：
-
-```powershell
-python cli.py --clear-sensitive-cache
-```
-
-清理功能会同时尝试删除当前版本的临时缓存根目录和旧版 `%TEMP%\wechatauto_db`。旧版目录也可能被其他直接使用 `wechatauto-replica` 的程序共用，因此执行清理前请先关闭这些程序。
-
-清理不会删除微信原始聊天数据库，也不会删除已经导出的 TXT、Markdown、JSON 或媒体文件。
-
-## 上游依赖更新策略
-
-`wechatauto-replica` 使用精确版本锁定（`==`），不会在重新安装或重新构建时自动漂移到未经验证的新版本。
-
-仓库使用 Dependabot 每周检查一次 `wechatauto-replica`。发现新版本时，只自动创建升级 Pull Request，不自动合并，也不会自动发布新版。
-
-依赖升级 PR 会触发现有 Windows CI，自动完成：
-
-- 安装 PR 中精确锁定的 `wechatauto-replica` 版本，并确认实际安装版本一致；
-- 检查本项目依赖的关键数据库 / 图片 API 是否仍存在；
-- 检查 `WECHATAUTO_KEYS_DIR` 和账号自愈临时目录等敏感缓存安全假设；
-- 运行完整单元测试；
-- 使用 PyInstaller 构建 Windows EXE；
-- 打包并上传 Windows Artifact。
-
-CI 全部通过只代表自动化兼容检查通过，**不代表自动批准升级**。合并前仍应人工查看上游 changelog / 代码变化，特别关注数据库密钥、缓存路径、媒体处理、微信版本兼容和新增依赖等可能影响本项目安全边界的变化。确认没有新的风险后再人工 Merge。
-
-这套流程的目标是让依赖升级做到“大部分自动发现与验证，最后人工审核”，避免长期落后于上游，也避免未经审查自动追最新版。
-
-## 图片、文件、语音和视频
-
-媒体文件只能导出本机目前还保留着缓存的部分。
-
-v1.3.5 起，图片缓存匹配会优先使用 `_h.dat`（高清/原图来源），找不到时再回退普通 `.dat`，最后才使用 `_t.dat` 或明文缩略图，避免在本机已有更高质量缓存时仍导出压缩版本。
-
-微信本地已经清掉的图片、文件或视频，本工具无法恢复。
-
-v1.3.4 同时补充了微视频 / 视频号处理：
-
-- 普通视频和兼容的微视频类型会继续尝试从本机视频缓存导出；
-- 视频号分享（常见为 `local_type 49` + `appmsg type 51`）会解析 `finderFeed`；
-- `chat_full_parsed.json` 会在对应消息中增加 `finder_feed`，保留视频号作者、描述、对象 ID、媒体 URL、封面、尺寸和时长等结构信息；
-- 勾选“视频”后，程序只会在能够可靠对应到现有本地视频文件时导出视频本体，不会用时间、文件大小或相似文件名去猜测；
-- Windows 微信 4.1.12 的真实验证中，视频号播放后的缩略图可以进入 Chromium HTTP cache，但视频本体没有通过当前可安全只读访问的 `message_resource.db`、`hardlink.db` 或普通 Chromium disk cache 建立可靠本地映射；
-- 视频号 CDN 视频还需要与该视频 URL 配对的运行时解密信息。当前本地只读模式无法从已验证的持久化数据中可靠取得这组信息，因此未匹配到本地视频时会明确标记为不可用；
-- 当前不会因为视频号消息而自动联网下载 CDN、调用私有接口、安装证书、代理微信流量或猜测缓存文件，避免把“本地导出”变成隐式网络行为。
-
-视频号 `finder_feed` 中可能包含临时 CDN URL 等资源信息。导出的 JSON 本身就是聊天数据的一部分，不建议未经脱敏直接公开分享。以后如果增加视频号在线获取能力，应作为默认关闭、明确提示联网与敏感数据处理的独立高级功能，而不是改变当前本地只读导出的默认行为。
-
-语音导出时会尝试把微信 SILK 转成 WAV。正式 Windows EXE 已经包含所需的 `rust-silk` 解码器；转换成功后不会额外保留 SILK 中间文件。
-
-## 本地语音转文字
-
-「语音转文字（本地）」默认关闭。
-
-勾选后会自动同时导出语音，并使用 SenseVoice 在本机完成识别。
-
-第一次使用时需要下载约 230 MB 的 SenseVoice Small Int8 模型，模型默认保存在：
-
-```text
-%LOCALAPPDATA%\WeChat-Chat-Export-for-LLM\models\sensevoice
-```
-
-模型只需要下载一次，换新版 EXE 后仍可继续使用。
-
-识别结果会缓存在：
-
-```text
-%LOCALAPPDATA%\WeChat-Chat-Export-for-LLM\cache\voice_asr_cache.json
-```
-
-重复导出同一条语音时可以直接复用。
-
-识别过程在本机完成，不上传聊天语音。转写缓存里包含文字内容，不建议随意分享。
-
-## 目前支持的内容
-
-目前会尽量处理：
-
-- 普通文字
-- 长文本
-- 引用回复
-- 撤回和系统消息
-- 群聊发送者
-- 图片
-- 文件
-- 语音
-- 普通视频、微视频和视频号分享
-- 链接、卡片、位置、动画表情等常见消息
-
-微信内部消息类型很多，少数特殊消息可能只能显示占位符；部分群成员昵称也可能无法完整还原。
-
-## 从源码运行
-
-推荐：
-
-```text
-Windows 10 / 11
-Python 3.12
-Windows 微信 4.1.12+
-```
-
-安装依赖：
-
-```powershell
-python -m pip install -r requirements.txt
-```
-
-运行 GUI：
-
-```powershell
-python app.py
-```
-
-命令行：
-
-```powershell
-python cli.py "好友备注名或群名" --images --files --voices --videos
-```
-
-本地语音转文字：
-
-```powershell
-python cli.py --install-asr
-python cli.py "好友备注名或群名" --transcribe-voices
-```
-
-### 源码运行时的语音解码
-
-仓库不会直接提交 `rust-silk.exe` 这个第三方二进制文件。需要时会从 `rust-silk` 官方 Release 获取固定版本，并校验 SHA-256。
-
-直接运行 GUI 源码时，如果第一次使用语音功能而本机没有 `rust-silk`，程序会询问是否自动下载。确认后会下载固定的 v0.1.3，并保存到：
-
-```text
-%LOCALAPPDATA%\WeChat-Chat-Export-for-LLM\tools\rust-silk.exe
-```
-
-命令行也可以先安装：
-
-```powershell
-python cli.py --install-rust-silk
-```
-
-也可以自己准备 `rust-silk.exe`，放在：
-
-```text
-wechat-chat-export\
-└─ tools\
-   └─ rust-silk.exe
-```
-
-如果没有安装或手动准备，语音仍可以导出为 SILK，但不能转换为 WAV，也无法继续做本地语音转文字。
-
-正式 Windows EXE 会在 GitHub Actions 构建时自动下载并打包 `rust-silk`，普通用户不需要额外安装。
-
-## Windows 构建
-
-`.github/workflows/build-windows.yml` 会在 GitHub Actions 中构建 Windows EXE。
-
-构建时会下载固定版本的 `rust-silk v0.1.3` 并校验 SHA-256，再和 Python 运行时及项目依赖一起打包。
-
-SenseVoice 模型不会打进 EXE，只有用户主动开启本地语音转文字后才会下载。
-
-底层微信数据库读取使用：
-
-[`fanyuantaier/wechatauto-replica`](https://github.com/fanyuantaier/wechatauto-replica)
-
-当前精确锁定版本：
-
-```text
-wechatauto-replica==1.2.4.4
-```
-
-依赖升级由 Dependabot 检查，并在 Windows CI 和人工审核通过后再更新。
-
-第三方组件和许可证见 [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md)。
-
-## 隐私和限制
-
-聊天记录只写到你选择的本地目录，本项目没有上传聊天内容的功能。
-
-v1.3.4 起，数据库密钥、图片密钥和解密数据库缓存使用一次性临时工作目录，并在导出结束或正常报错时尝试自动清理。强制结束进程、系统断电或文件占用仍可能导致临时缓存残留，可使用「清除敏感缓存」或 `--clear-sensitive-cache` 手动清理。
-
-提交代码前仍建议自己检查 GitHub Desktop 的 Changes 或 `git status`。不要把真实聊天、微信数据库、解密密钥、媒体文件或语音转写缓存提交到 GitHub。
-
-目前主要限制：
-
-- 只支持 Windows；
-- 当前面向 Windows 微信 4.1.12+；
-- 单个会话按备注名、昵称或群名查找时，同名对象仍可能匹配歧义；批量导出不依赖显示名区分目录，而使用稳定 `username` 派生目录；
-- 自动探测仍可能选错数据目录，这时可以重新选择或使用 `--db-dir`；
-- 媒体只能导出本机仍有缓存的部分；
-- 部分特殊消息和群成员昵称无法完整还原；
-- 微信更新数据库结构或客户端实现后，项目可能需要继续适配。
-
-遇到问题可以提交 Issue，但请先脱敏，不要直接上传真实聊天数据库、密钥或完整私人聊天记录。
-
-## 免责声明
-
-本项目是独立开源工具，与腾讯、微信（WeChat / Weixin）及其关联公司没有隶属、授权、认可或合作关系。
-
-微信、WeChat、Weixin 及相关名称、商标归其各自权利人所有。
-
-请只处理你本人有权访问和处理的数据，并自行遵守所在地法律法规、软件服务条款以及聊天参与者的隐私权。
-
-软件按「现状」提供，微信版本、系统环境或上游依赖变化都可能导致功能失效或导出结果不完整。
-
-## 开发与致谢
-
-本项目的大部分早期设计、代码实现、问题排查和文档整理是在 ChatGPT 的协助下完成的。
-
-项目由仓库维护者提出需求、进行实际环境测试并负责发布与维护，也欢迎社区贡献。
-
-感谢 [fanyuantaier/wechatauto-replica](https://github.com/fanyuantaier/wechatauto-replica) 提供 Windows 微信 4.x 数据库读取与媒体处理等底层能力，本项目在其基础上完成聊天整理、媒体导出、预览和面向大模型的输出。
-
-感谢 [@wzh4464](https://github.com/wzh4464) 提交 PR #1，为项目加入手动指定微信数据目录的支持，并完善相关路径兼容和异常处理。
-
-感谢 [@EnTaroYan](https://github.com/EnTaroYan) 提交 Issue #2 和 PR #4，定位并修复跨消息数据库分片时的发送者身份映射错误，并补充相关回归测试。
-
-感谢 [@peterforeternity](https://github.com/peterforeternity) 提交 Issue #6，指出旧版本本地敏感解密缓存长期残留的风险，并反馈视频号/短视频导出限制。
-
-## License
-
-Apache License 2.0。
-
-第三方依赖按各自许可证使用，见 [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md)。
-
-### 自动清理异常残留（v1.3.4）
-
-正常导出完成或常规报错时，程序仍会立即删除本次使用的敏感临时工作目录。除此之外，GUI 启动和下一次导出开始前还会自动检查本项目专属的 `%TEMP%\wechat-chat-export-sensitive\run-*` 残留：带进程标记且对应进程已经不存在的目录会自动清理；仍有活动进程的目录会跳过。此前测试版产生的无标记目录采用更保守的策略，仅在超过 24 小时后自动清理。
-
-自动清理**不会**删除旧版共享的 `%TEMP%\wechatauto_db`，该目录仍只通过“清除敏感缓存”按钮或 `--clear-sensitive-cache` 由用户明确清理，避免误伤其他直接使用 `wechatauto` 的程序。
+本项目与腾讯、微信及其关联公司没有隶属、授权或合作关系。请只处理自己有权访问的数据；微信版本、系统环境或依赖变化可能导致部分功能失效或导出不完整。不需要为运行本工具关闭系统安全保护。

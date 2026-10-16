@@ -64,7 +64,9 @@ class FlatExportTests(unittest.TestCase):
         with patch.object(core, 'WeChatDB', return_value=self.db), patch.object(service, 'datetime') as clock:
             clock.now.return_value = datetime(2026, 10, 15, 12, 30)
             result = service.export_selected_chats(['wxid_a'], service.ExportOptions(out_root=folder, formats=('txt',)))
-        self.assertEqual(Path(result['output_dir']), folder)
+        # Windows TEMP may use an 8.3 alias that resolve() expands.
+        # Compare the actual directory, while the file listing still catches nesting.
+        self.assertTrue(Path(result['output_dir']).samefile(folder))
         self.assertEqual({p.name for p in folder.iterdir()}, {'同名.txt'})
 
     def test_publish_never_replaces_an_existing_file(self):
