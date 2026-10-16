@@ -4,8 +4,8 @@ import tkinter as tk
 from tkinter import font as tkfont, ttk
 
 from chat_list_service import ChatSelection
-from ui.theme import (WHITE, INK, MUTED, LINE, GREEN, GREEN_DARK, PALE, BODY_FONT,
-                      RoundedCard, combo_field, label, link_button, rounded_rect)
+from ui.theme import (WHITE, INK, MUTED, LINE, GREEN, GREEN_DARK, PALE, FIELD, BODY_FONT,
+                      RoundedCard, combo_field, label, link_button, rounded_rect, pill, heading_dot, draw_icon)
 
 
 class ChatList(tk.Frame):
@@ -24,19 +24,21 @@ class ChatList(tk.Frame):
         self.selection_note = tk.StringVar(value='已选择 0 个')
         self.list_count = tk.StringVar(value='当前显示 0 个聊天')
         self.source_note = tk.StringVar(value='本地聊天')
-        self.name_font = tkfont.Font(font=(BODY_FONT[0], 10, 'bold'))
-        self.small_font = tkfont.Font(font=(BODY_FONT[0], 9))
-        self.tiny_font = tkfont.Font(font=(BODY_FONT[0], 8))
-        self.row_height = max(74, self.name_font.metrics('linespace') + self.small_font.metrics('linespace') + 25)
+        self.name_font = tkfont.Font(font=(BODY_FONT[0], 11, 'bold'))
+        self.small_font = tkfont.Font(font=(BODY_FONT[0], 10))
+        self.tiny_font = tkfont.Font(font=(BODY_FONT[0], 9))
+        self.row_height = max(76, self.name_font.metrics('linespace') + self.small_font.metrics('linespace') + 25)
         self._draw_id = None
         self.columnconfigure(0, weight=1)
         self.rowconfigure(3, weight=1)
         top = tk.Frame(self, background=WHITE)
-        top.grid(row=0, column=0, sticky='ew', padx=20, pady=(8, 16))
-        label(top, '选择要导出的聊天', bold=True).pack(side='left')
-        label(top, variable=self.selection_note, small=True, color=MUTED).pack(side='right')
+        top.grid(row=0, column=0, sticky='ew', padx=18, pady=(4, 12))
+        heading_dot(top).pack(side='left', padx=(0, 7))
+        tk.Label(top, text='选择要导出的聊天', font=(BODY_FONT[0], 12, 'bold'),
+                 background=WHITE, foreground=INK, borderwidth=0).pack(side='left')
+        pill(top, variable=self.selection_note, width=100, height=30).pack(side='right')
         filters = tk.Frame(self, background=WHITE)
-        filters.grid(row=1, column=0, sticky='ew', padx=20, pady=(0, 16))
+        filters.grid(row=1, column=0, sticky='ew', padx=18, pady=(0, 12))
         filters.columnconfigure(1, weight=1)
         category_field, self.category_combo = combo_field(filters, self.category, ('全部', '好友', '群聊'), width=10)
         category_field.grid(row=0, column=0, sticky='ew', padx=(0, 10))
@@ -48,18 +50,22 @@ class ChatList(tk.Frame):
                                      background=WHITE, foreground=INK, insertbackground=GREEN,
                                      font=BODY_FONT, disabledbackground=WHITE)
         self.search_entry.pack(fill='both', expand=True)
-        self.placeholder = label(search.body, '搜索聊天名称', color='#99a3ac')
+        self.placeholder = label(search.body, '搜索微信好友、群聊或备注…', color=MUTED)
         self.placeholder.place(x=2, rely=.5, anchor='w')
         self.placeholder.bind('<Button-1>', lambda _: self.search_entry.focus_set())
         self.search_entry.bind('<FocusIn>', lambda _: self.placeholder.place_forget())
         self.search_entry.bind('<FocusOut>', lambda _: self._placeholder())
-        strip = tk.Frame(self, background='#fafbfd', highlightbackground='#f0f1f4', highlightthickness=1)
-        strip.grid(row=2, column=0, sticky='ew', pady=(0, 4))
-        label(strip, variable=self.list_count, small=True, color=MUTED, background='#fafbfd').pack(side='left', padx=20, pady=7)
-        self.select_all_btn = link_button(strip, '全选当前列表', self.select_visible)
-        self.select_all_btn.pack(side='right', padx=20)
+        strip = RoundedCard(self, height=42, width=1, radius=9, inset=(12, 4),
+                              shadow=False, background=WHITE, fill=FIELD)
+        strip.grid(row=2, column=0, sticky='ew', padx=18, pady=(0, 8))
+        list_icon = tk.Canvas(strip.body, width=17, height=18, background=FIELD, highlightthickness=0, takefocus=False)
+        list_icon.pack(side='left', padx=(0, 7))
+        draw_icon(list_icon, 'list', 0, 1, 17, MUTED)
+        label(strip.body, variable=self.list_count, small=True, bold=True, color='#74869f', background=FIELD).pack(side='left')
+        self.select_all_btn = link_button(strip.body, '全选当前列表', self.select_visible)
+        self.select_all_btn.pack(side='right')
         body = tk.Frame(self, background=WHITE)
-        body.grid(row=3, column=0, sticky='nsew', padx=(8, 6))
+        body.grid(row=3, column=0, sticky='nsew', padx=(4, 4))
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
         self.canvas = tk.Canvas(body, background=WHITE, highlightthickness=0, borderwidth=0,
@@ -80,15 +86,17 @@ class ChatList(tk.Frame):
         self.canvas.bind('<FocusIn>', lambda _: self._queue_draw())
         self.canvas.bind('<FocusOut>', lambda _: self._queue_draw())
         footer = tk.Frame(self, background=WHITE)
-        footer.grid(row=4, column=0, sticky='ew', padx=20, pady=(10, 4))
+        footer.grid(row=4, column=0, sticky='ew', padx=18, pady=(0, 2))
         tk.Frame(footer, background=LINE, height=1).pack(fill='x', pady=(0, 10))
         row = tk.Frame(footer, background=WHITE)
         row.pack(fill='x')
-        label(row, variable=self.count, small=True, color=MUTED).pack(side='left')
-        self.refresh_btn = link_button(row, '刷新列表', on_refresh, color=MUTED)
+        label(row, '●', small=True, color=GREEN).pack(side='left', padx=(0, 7))
+        label(row, variable=self.count, small=True, color=INK).pack(side='left')
+        self.refresh_btn = link_button(row, '刷新列表', on_refresh, color=INK)
         self.refresh_btn.pack(side='right')
-        self.clear_btn = link_button(row, '清空选择', self.clear, color=MUTED)
-        self.clear_btn.pack(side='right', padx=12)
+        label(row, '│', small=True, color='#c4cfdd').pack(side='right', padx=10)
+        self.clear_btn = link_button(row, '清空选择', self.clear, color=INK)
+        self.clear_btn.pack(side='right')
         self.category.trace_add('write', lambda *_: self.render())
         self.query.trace_add('write', lambda *_: self.render())
         self.render()
@@ -179,7 +187,7 @@ class ChatList(tk.Frame):
         w, h = self.canvas.winfo_width(), self.canvas.winfo_height()
         if not self.visible:
             title = '没有找到聊天' if self.model.chats else '聊天列表尚未加载'
-            note = '试试换个关键词或筛选条件' if self.model.chats else '登录微信后刷新列表，或在右上角选择账号'
+            note = '试试换个关键词或筛选条件' if self.model.chats else '登录微信后点击右上角检测微信账号'
             self.canvas.create_text(w/2, max(75, h/2-12), text=title, font=self.name_font, fill=MUTED, tags='row')
             self.canvas.create_text(w/2, max(102, h/2+18), text=note, width=max(100, w-40),
                                     font=self.small_font, fill='#a0aab4', tags='row')
@@ -189,39 +197,44 @@ class ChatList(tk.Frame):
         for index in range(start, end):
             c = self.visible[index]
             username = c['username']
-            top = index*self.row_height + 3
-            bottom = top+self.row_height-7
+            top = index*self.row_height
+            bottom = top+self.row_height
             selected = username in self.model.selected
             focus = self.focused == username and self.canvas.focus_get() == self.canvas
-            rounded_rect(self.canvas, 3, top, w-3, bottom, 10,
-                         fill=PALE if selected else '#f7faf9' if self.hovered == username else WHITE,
-                         outline='#94e0b8' if focus else '', tags='row')
+            rounded_rect(self.canvas, 3, top+1, w-3, bottom-1, 9,
+                         fill=PALE if selected else '#f7fafc' if self.hovered == username else WHITE,
+                         outline='#94e0c6' if focus else '', tags='row')
+            self.canvas.create_line(0, bottom-1, w, bottom-1, fill='#edf2f7', tags='row')
             cy = (top+bottom)/2
-            rounded_rect(self.canvas, 16, cy-8, 32, cy+8, 3,
-                         fill=GREEN if selected else WHITE, outline=GREEN if selected else '#c6d0d6', tags='row')
+            rounded_rect(self.canvas, 16, cy-9, 34, cy+9, 4,
+                         fill=GREEN if selected else WHITE, outline=GREEN if selected else '#cfdae7', tags='row')
             if selected:
-                self.canvas.create_line(20, cy, 23, cy+3, 29, cy-4, width=2, fill=WHITE, tags='row')
-            color = '#7a91b4' if c.get('is_group') else '#76b9a3'
-            rounded_rect(self.canvas, 44, cy-20, 84, cy+20, 11, fill=color, outline='', tags='row')
+                self.canvas.create_line(20, cy, 24, cy+4, 30, cy-4, width=2, fill=WHITE, tags='row')
+            palette = (('#daf9fb', '#087f98'), ('#d6fae8', '#17694e'), ('#dff2ff', '#1d78a7'),
+                       ('#f0e1ff', '#843db4'), ('#e3e6ff', '#4b4eaf'), ('#ffebd0', '#ac5b1b'))
+            color, avatar_ink = palette[sum(ord(char) for char in username) % len(palette)]
+            rounded_rect(self.canvas, 52, cy-23, 98, cy+23, 12, fill=color, outline='', tags='row')
             name = str(c.get('name') or username)
-            self.canvas.create_text(64, cy, text=name[:1], fill=WHITE, font=self.name_font, tags='row')
+            self.canvas.create_text(75, cy, text=name[:1], fill=avatar_ink, font=(BODY_FONT[0], 15, 'bold'), tags='row')
             date = self._date(c.get('last_time'))
             date_w = self.tiny_font.measure(date)
-            self.canvas.create_text(w-15, top+16, anchor='e', text=date, fill='#a4aeb5', font=self.tiny_font, tags='row')
+            rounded_rect(self.canvas, w-date_w-34, cy-22, w-17, cy, 6,
+                         fill='#f7f9fc', outline='#edf1f6', tags='row')
+            self.canvas.create_text(w-25, cy-11, anchor='e', text=date, fill='#899bb4', font=self.tiny_font, tags='row')
             kind = '群聊' if c.get('is_group') else '好友'
             badge_w = self.tiny_font.measure(kind) + 12
-            name_room = max(30, w-100-date_w-16-badge_w-16)
+            name_room = max(30, w-118-date_w-34-badge_w-20)
             name = self._fit(name, name_room, self.name_font)
-            self.canvas.create_text(98, cy-11, text=name, anchor='w', fill=INK, font=self.name_font, tags='row')
-            badge_x = 98+self.name_font.measure(name)+8
+            self.canvas.create_text(116, cy-11, text=name, anchor='w', fill=INK, font=self.name_font, tags='row')
+            badge_x = 116+self.name_font.measure(name)+8
             rounded_rect(self.canvas, badge_x, cy-20, badge_x+badge_w, cy-2, 4,
-                         fill='#dbf0e5' if selected else '#f0f2f5', outline='', tags='row')
+                         fill='#e3f7ee' if selected else '#f0f3f7', outline='', tags='row')
             self.canvas.create_text(badge_x+badge_w/2, cy-11, text=kind,
-                                    fill='#40866b' if selected else '#8d97a0', font=self.tiny_font, tags='row')
+                                    fill='#438a70' if selected else '#8a9ab0', font=self.tiny_font, tags='row')
             nick = c.get('nick_name')
             subtitle = f'昵称：{nick}' if nick and nick != c.get('name') else username
-            self.canvas.create_text(98, cy+13, text=self._fit(subtitle, max(30, w-115), self.small_font),
-                                    anchor='w', fill='#99a3ac', font=self.small_font, tags='row')
+            self.canvas.create_text(116, cy+14, text=self._fit(subtitle, max(30, w-133), self.small_font),
+                                    anchor='w', fill='#91a1b8', font=self.small_font, tags='row')
 
     def _row_at(self, y):
         index = int(self.canvas.canvasy(y)//self.row_height)

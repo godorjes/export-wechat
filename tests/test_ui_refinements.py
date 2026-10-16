@@ -31,7 +31,11 @@ class UiRefinementsTests(unittest.TestCase):
         from test_selected_export import fixture_db
         app = self.app
         def header_status():
-            return ' '.join(w.cget('text') for w in app.account_btn.master.winfo_children()
+            def walk(widget):
+                for child in widget.winfo_children():
+                    yield child
+                    yield from walk(child)
+            return ' '.join(w.cget('text') for w in walk(app.account_btn.master)
                             if isinstance(w, tk.Label) and w != app.account_dot)
         self.assertIn('未识别', header_status())
         with tempfile.TemporaryDirectory() as tmp:
@@ -60,7 +64,7 @@ class UiRefinementsTests(unittest.TestCase):
                     self.wait_for_task()
             self.assertTrue(app.source_ready)
             self.assertEqual(app.loaded_source, db.account_dir)
-            self.assertEqual(app.account_dot.cget('foreground'), '#13a565')
+            self.assertEqual(app.account_dot.cget('foreground'), '#00bd84')
             self.assertEqual(app.account_btn.cget('text'), '重新检测')
             self.assertEqual(app.account_btn.cget('state'), 'normal')
             self.assertIn('已识别', header_status())

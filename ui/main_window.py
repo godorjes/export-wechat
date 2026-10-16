@@ -17,9 +17,10 @@ from chat_list_service import list_chats
 from export_task_service import CancelToken, ExportOptions, export_selected_chats, safe_error
 from wechat_data_dirs import _account_dirs, discover_wechat_data_dirs
 from ui.chat_list import ChatList
-from ui.theme import (BG, WHITE, INK, MUTED, LINE, GREEN, RoundedCard, RoundedButton,
+from ui.theme import (BG, WHITE, INK, MUTED, LINE, GREEN, GREEN_DARK, FIELD, RoundedCard, RoundedButton,
                       ScrollFrame, combo_field, configure_theme, destination_folders,
-                      label, link_button, rounded_rect)
+                      label, link_button, rounded_rect, draw_icon, icon_tile, pill, heading_dot,
+                      style_native_titlebar)
 
 
 def discover_sources(progress=None):
@@ -70,7 +71,7 @@ class App(tk.Tk):
     def __init__(self, auto_load=True, app_directory=None, icon=None):
         super().__init__()
         self.title('微信聊天记录导出 V1.0')
-        self.geometry('1160x780')
+        self.geometry('1280x820')
         self.minsize(980, 640)
         configure_theme(self)
         if icon:
@@ -105,122 +106,160 @@ class App(tk.Tk):
         self.images = tk.BooleanVar(value=False)
         self.files = tk.BooleanVar(value=False)
         self.content_choice = tk.StringVar(value='仅聊天文字（推荐）')
-        self.format_help = tk.StringVar(value='适合直接打开、阅读和保存。')
+        self.format_help = tk.StringVar(value='同时保存：TXT')
         self.content_help = tk.StringVar(value='导出更快，文件体积更小。')
+        self.content_badge = tk.StringVar(value='仅文字')
+        self.setting_cards = []
         self.rowconfigure(1, weight=1)
         self.columnconfigure(0, weight=1)
 
-        header = tk.Frame(self, background=BG)
-        header.grid(row=0, column=0, sticky='ew', padx=34, pady=(24, 22))
+        header_bg = tk.Frame(self, background=WHITE)
+        header_bg.grid(row=0, column=0, sticky='ew')
+        header = tk.Frame(header_bg, background=WHITE)
+        header.pack(fill='x', padx=26, pady=(17, 17))
         header.columnconfigure(1, weight=1)
-        mark = tk.Canvas(header, width=46, height=46, background=BG, highlightthickness=0)
-        mark.grid(row=0, column=0, rowspan=2, padx=(0, 12))
-        rounded_rect(mark, 1, 1, 45, 45, 14, fill=GREEN, outline='')
-        mark.create_oval(10, 10, 36, 34, outline=WHITE, width=2)
-        mark.create_line(13, 29, 10, 36, 20, 32, fill=WHITE, width=2)
-        for x in (16, 23, 30):
-            mark.create_oval(x-1, 21, x+1, 23, fill=WHITE, outline='')
-        tk.Label(header, text='微信聊天记录导出', background=BG, foreground=INK,
-                 font=('Microsoft YaHei UI', 17, 'bold'), anchor='w').grid(row=0, column=1, sticky='w')
-        label(header, '选好聊天，轻松保存到电脑', small=True, color=MUTED, background=BG).grid(row=1, column=1, sticky='w', pady=(3, 0))
-        tools = tk.Frame(header, background=BG)
+        mark = tk.Canvas(header, width=62, height=64, background=WHITE, highlightthickness=0, takefocus=False)
+        mark.grid(row=0, column=0, rowspan=2, padx=(0, 18))
+        rounded_rect(mark, 1, 4, 61, 63, 17, fill='#d9f4e9', outline='')
+        rounded_rect(mark, 1, 1, 61, 61, 17, fill=GREEN, outline='')
+        draw_icon(mark, 'wechat', 13, 12, 36, WHITE)
+        title_row = tk.Frame(header, background=WHITE)
+        title_row.grid(row=0, column=1, sticky='w')
+        tk.Label(title_row, text='微信聊天记录导出', background=WHITE, foreground=INK,
+                 font=('Microsoft YaHei UI', 19, 'bold'), borderwidth=0).pack(side='left')
+        pill(title_row, '本地电脑版', width=88, height=32).pack(side='left', padx=(12, 0))
+        label(header, '选好聊天，轻松保存到电脑', color=MUTED).grid(row=1, column=1, sticky='w', pady=(2, 0))
+        tools = tk.Frame(header, background=WHITE)
         tools.grid(row=0, column=2, rowspan=2, sticky='e')
-        self.account_btn = RoundedButton(tools, '检测微信账号', self.discover, height=36, small=True)
+        self.account_btn = RoundedButton(tools, '检测微信账号', self.discover, height=36,
+                                          width=124, small=True, icon='refresh', icon_color=GREEN)
         self.account_btn.pack(side='left')
-        self.account_dot = label(tools, '●', small=True, color='#db5252', background=BG)
-        self.account_dot.pack(side='left', padx=(8, 6))
-        self.account_status_label = label(tools, variable=self.account_status, small=True, color=MUTED, background=BG)
-        self.account_status_label.pack(side='left', padx=(0, 16))
-        link_button(tools, '使用帮助', self.show_help, color=MUTED).pack(side='left')
+        self.account_badge = RoundedCard(tools, width=158, height=36, radius=10, inset=(10, 5),
+                                          shadow=False, background=WHITE, fill='#fff5f3')
+        self.account_badge.pack(side='left', padx=(9, 10))
+        self.account_dot = label(self.account_badge.body, '●', small=True, color='#db5252', background='#fff5f3')
+        self.account_dot.pack(side='left', padx=(0, 6))
+        self.account_status_label = label(self.account_badge.body, variable=self.account_status,
+                                          small=True, bold=True, color=MUTED, background='#fff5f3')
+        self.account_status_label.pack(side='left', fill='both', expand=True)
+        RoundedButton(tools, '使用帮助', self.show_help, height=36, small=True,
+                      icon='help', icon_color=MUTED, width=112).pack(side='left')
+        tk.Frame(header_bg, background='#f0f3f7', height=1).pack(fill='x')
 
         layout = tk.Frame(self, background=BG)
-        layout.grid(row=1, column=0, sticky='nsew', padx=34, pady=(0, 14))
+        layout.grid(row=1, column=0, sticky='nsew', padx=26, pady=(17, 10))
         layout.rowconfigure(0, weight=1)
-        layout.columnconfigure(0, weight=135, uniform='panels')
-        layout.columnconfigure(1, weight=91, uniform='panels')
-        left = RoundedCard(layout)
-        left.grid(row=0, column=0, sticky='nsew', padx=(0, 8))
+        layout.columnconfigure(0, weight=3, uniform='panels')
+        layout.columnconfigure(1, weight=2, uniform='panels')
+        left = RoundedCard(layout, radius=16)
+        left.grid(row=0, column=0, sticky='nsew', padx=(0, 10))
         left.body.rowconfigure(0, weight=1)
         left.body.columnconfigure(0, weight=1)
         self.chat_list = ChatList(left.body, self.update_buttons, self.refresh)
         self.chat_list.grid(row=0, column=0, sticky='nsew')
-        right = RoundedCard(layout)
-        right.grid(row=0, column=1, sticky='nsew', padx=(9, 0))
+        right = RoundedCard(layout, radius=16)
+        right.grid(row=0, column=1, sticky='nsew', padx=(10, 0))
         right.body.columnconfigure(0, weight=1)
         right.body.rowconfigure(1, weight=1)
         heading = tk.Frame(right.body, background=WHITE)
-        heading.grid(row=0, column=0, sticky='ew', padx=22, pady=(8, 18))
-        label(heading, '导出设置', bold=True).pack(side='left')
-        label(heading, '简单设置就能开始', small=True, color=MUTED).pack(side='right')
+        heading.grid(row=0, column=0, sticky='ew', padx=18, pady=(7, 12))
+        heading.columnconfigure(0, weight=1)
+        heading_line = tk.Frame(heading, background=WHITE)
+        heading_line.grid(row=0, column=0, sticky='w')
+        heading_dot(heading_line).pack(side='left', padx=(0, 7))
+        tk.Label(heading_line, text='导出设置', background=WHITE, foreground=INK,
+                 font=('Microsoft YaHei UI', 12, 'bold'), borderwidth=0).pack(side='left')
+        label(heading, '简单设置就能开始导出备份', color=MUTED).grid(row=1, column=0, sticky='w', pady=(4, 0))
         scroller = ScrollFrame(right.body)
-        scroller.grid(row=1, column=0, sticky='nsew', padx=(22, 15))
+        scroller.grid(row=1, column=0, sticky='nsew', padx=(18, 12))
         self.settings_canvas = scroller.canvas
         self.settings_body = opts = scroller.body
         opts.columnconfigure(0, weight=1)
-        format_section = tk.Frame(opts, background=WHITE)
-        format_section.grid(row=0, column=0, sticky='ew', pady=(0, 19))
-        format_section.columnconfigure(0, weight=1)
-        label(format_section, '保存格式', small=True, bold=True, color='#41505c').grid(row=0, column=0, sticky='w', pady=(0, 8))
+        format_section = self._setting_card(opts, 0, '保存格式', 'document', '#7565ef', '#efedff',
+                                             '多格式可选', '#7565ef', '#f2efff', '#ded9ff')
         _, self.format_combo = combo_field(format_section, None, ('txt', 'md', 'json'), width=1,
                                           variables=self.format_vars,
                                           labels={'txt': 'TXT', 'md': 'Markdown', 'json': 'JSON'})
-        self.format_combo.grid(row=1, column=0, sticky='ew')
+        self.format_combo.grid(row=1, column=0, sticky='ew', pady=(8, 0))
         self.settings_controls.append((self.format_combo, 'readonly'))
-        label(format_section, variable=self.format_help, small=True, color='#99a4ac').grid(row=2, column=0, sticky='w', pady=(7, 0))
-        self.content_combo = self._setting_field(opts, 1, '包含哪些内容', self.content_choice,
-                            ('仅聊天文字（推荐）', '文字和图片', '文字、图片和普通文件', '文字和普通文件'), self.content_help)
+        self._setting_hint(format_section, self.format_help, '#8574f3')
+        content_section = self._setting_card(opts, 1, '包含哪些内容', 'image', GREEN, '#e3fbf0',
+                                              self.content_badge, GREEN_DARK, '#ecfcf5', '#b6efd9')
+        _, self.content_combo = combo_field(content_section, self.content_choice,
+                            ('仅聊天文字（推荐）', '文字和图片', '文字、图片和普通文件', '文字和普通文件'), width=1)
+        self.content_combo.grid(row=1, column=0, sticky='ew', pady=(8, 0))
         self.content_combo.bind('<<ComboboxSelected>>', self.content_changed)
-        save = tk.Frame(opts, background=WHITE)
-        save.grid(row=2, column=0, sticky='ew', pady=(0, 19))
-        save.columnconfigure(0, weight=1)
-        label(save, '保存到哪里', small=True, bold=True, color='#41505c').grid(row=0, column=0, sticky='w', pady=(0, 8))
+        self.settings_controls.append((self.content_combo, 'readonly'))
+        self._setting_hint(content_section, self.content_help, GREEN)
+        save = self._setting_card(opts, 2, '保存到哪里', 'folder', '#de941b', '#fff6e2',
+                                  '自定义', '#b87718', '#fff7e7', '#f5e3ba', height=112)
         self.custom_folder = tk.Frame(save, background=WHITE)
-        self.custom_folder.grid(row=1, column=0, sticky='ew')
+        self.custom_folder.grid(row=1, column=0, sticky='ew', pady=(8, 0))
         self.custom_folder.columnconfigure(0, weight=1)
-        path_shell = RoundedCard(self.custom_folder, height=42, width=1, radius=9, inset=(8, 5), shadow=False, background=WHITE)
+        path_shell = RoundedCard(self.custom_folder, height=42, width=1, radius=9, inset=(8, 5),
+                                  shadow=False, background=WHITE, fill=FIELD)
         path_shell.grid(row=0, column=0, sticky='ew')
         self.path_entry = ttk.Entry(path_shell.body, textvariable=self.out, width=1)
         self.path_entry.pack(fill='both', expand=True)
-        self.browse_output_btn = RoundedButton(self.custom_folder, '选择', self.browse_output, height=42, small=True)
+        self.browse_output_btn = RoundedButton(self.custom_folder, '选择', self.browse_output,
+                                                height=42, small=True, color='#514bb4')
         self.browse_output_btn.grid(row=0, column=1, padx=(8, 0))
         self.settings_controls.extend(((self.path_entry, 'normal'), (self.browse_output_btn, 'normal')))
         scroller.bind_wheel()
 
-        footer = tk.Frame(right.body, background='#fbfdfc')
-        footer.grid(row=2, column=0, sticky='ew', pady=(14, 0))
+        footer = tk.Frame(right.body, background=WHITE)
+        footer.grid(row=2, column=0, sticky='ew', pady=(8, 0))
         footer.columnconfigure(0, weight=1)
         tk.Frame(footer, background=LINE, height=1).grid(row=0, column=0, sticky='ew')
-        action = tk.Frame(footer, background='#fbfdfc')
-        action.grid(row=1, column=0, sticky='ew', padx=22, pady=(16, 0))
+        action = tk.Frame(footer, background=WHITE)
+        action.grid(row=1, column=0, sticky='ew', padx=18, pady=(12, 0))
         action.columnconfigure(0, weight=1)
-        self.export_btn = RoundedButton(action, '选择聊天后开始导出', self.start_selected, primary=True, height=46, width=1)
+        self.export_btn = RoundedButton(action, '选择聊天后开始导出', self.start_selected, primary=True,
+                                        icon='download', height=46, width=1)
         self.export_btn.grid(row=0, column=0, sticky='ew')
-        self.task_frame = tk.Frame(action, background='#fbfdfc')
+        self.task_frame = tk.Frame(action, background=WHITE)
         self.task_frame.grid(row=1, column=0, sticky='ew', pady=(4, 0))
         self.task_frame.columnconfigure(0, weight=1)
         task_label = label(self.task_frame, variable=self.progress_text, small=True, color=MUTED,
-                           background='#fbfdfc', wraplength=260, justify='left')
+                           background=WHITE, wraplength=260, justify='left')
         task_label.grid(row=0, column=0, sticky='ew')
         self.cancel_btn = RoundedButton(self.task_frame, '取消导出', self.cancel, height=39, state='disabled')
-        self.cancel_btn.grid(row=1, column=0, sticky='ew', pady=(12, 0))
+        self.cancel_btn.grid(row=1, column=0, sticky='ew', pady=(10, 0))
         self.task_frame.grid_remove()
-        self.result_buttons = tk.Frame(action, background='#fbfdfc')
-        self.result_buttons.grid(row=2, column=0, sticky='ew', pady=(10, 0))
+        self.result_buttons = tk.Frame(action, background=WHITE)
+        self.result_buttons.grid(row=2, column=0, sticky='ew', pady=(8, 0))
         self.result_buttons.columnconfigure(0, weight=1)
-        self.open_btn = RoundedButton(self.result_buttons, '打开文件夹', self.open_output, height=34, small=True, state='disabled', width=1)
+        self.open_btn = RoundedButton(self.result_buttons, '打开文件夹', self.open_output, height=40, small=True,
+                                      state='disabled', width=1, icon='folder', icon_color=MUTED)
         self.open_btn.grid(row=0, column=0, sticky='ew')
         self.result_buttons.grid_remove()
         state_label = label(footer, variable=self.state, small=True, color=MUTED,
-                            background='#fbfdfc', wraplength=300, justify='center')
+                            background=WHITE, wraplength=300, justify='center')
         self.state_label = state_label
         state_label.configure(anchor='center')
-        state_label.grid(row=2, column=0, sticky='ew', padx=22, pady=(11, 3))
+        state_label.grid(row=2, column=0, sticky='ew', padx=18, pady=(8, 2))
         action.bind('<Configure>', lambda event: task_label.configure(wraplength=max(120, event.width-5)))
-        footer.bind('<Configure>', lambda event: state_label.configure(wraplength=max(160, event.width-44)))
-        self.footer_status = label(self, variable=self.source_status, small=True, color='#96a2a9',
-                                  background=BG, wraplength=1050, justify='center')
-        self.footer_status.configure(anchor='center')
-        self.footer_status.grid(row=2, column=0, sticky='ew', padx=34, pady=(0, 16))
+        footer.bind('<Configure>', lambda event: state_label.configure(wraplength=max(160, event.width-36)))
+
+        status_bar = tk.Frame(self, background=WHITE)
+        status_bar.grid(row=2, column=0, sticky='ew')
+        tk.Frame(status_bar, background=LINE, height=1).pack(fill='x')
+        status_body = tk.Frame(status_bar, background=WHITE)
+        status_body.pack(fill='x', padx=26, pady=(6, 6))
+        self.status_dot = label(status_body, '●', small=True, color='#db5252')
+        self.status_dot.pack(side='left', padx=(0, 8))
+        self.footer_status = label(status_body, variable=self.source_status, small=True, color='#53627a',
+                                  background=WHITE, wraplength=700, justify='left')
+        self.footer_status.pack(side='left')
+        label(status_body, '│', small=True, color='#c4cfdd').pack(side='left', padx=(12, 10))
+        label(status_body, '存储引擎已就绪（SQLite 数据还原）', small=True, color=MUTED).pack(side='left')
+        self.engine_status = tk.Frame(status_body, background=WHITE)
+        label(self.engine_status, '●', small=True, color=GREEN).pack(side='left', padx=(0, 8))
+        engine_label = label(self.engine_status, 'Local Engine Ready', small=True, color=MUTED)
+        engine_label.configure(font=('Consolas', 9))
+        engine_label.pack(side='left')
+        self.engine_status.pack(side='right')
+        self.bind('<Map>', lambda event: style_native_titlebar(self) if event.widget == self else None, add='+')
         self.bind('<Configure>', self._window_resized, add='+')
         for var in self.format_vars.values():
             var.trace_add('write', self.sync_formats)
@@ -234,33 +273,53 @@ class App(tk.Tk):
 
     def _window_resized(self, event):
         if event.widget == self:
-            self.footer_status.configure(wraplength=max(500, event.width-68))
+            self.footer_status.configure(wraplength=max(280, event.width-(620 if event.width >= 1180 else 420)))
+            if event.width >= 1180:
+                self.engine_status.pack(side='right')
+            else:
+                self.engine_status.pack_forget()
 
-    def _setting_field(self, parent, row, title, variable, values, hint):
-        section = tk.Frame(parent, background=WHITE)
-        section.grid(row=row, column=0, sticky='ew', pady=(0, 19 if hint else 0))
+    def _setting_card(self, parent, row, title, icon, accent, tint, badge,
+                      badge_color, badge_fill, badge_border, height=138):
+        card = RoundedCard(parent, width=1, height=height, radius=14, inset=(16, 12),
+                            shadow=False, background=WHITE)
+        card.grid(row=row, column=0, sticky='ew', pady=(0, 12))
+        self.setting_cards.append(card)
+        section = card.body
         section.columnconfigure(0, weight=1)
-        label(section, title, small=True, bold=True, color='#41505c').grid(row=0, column=0, sticky='w', pady=(0, 8))
-        shell, control = combo_field(section, variable, values, width=1)
-        shell.grid(row=1, column=0, sticky='ew')
-        if hint:
-            hint_label = label(section, variable=hint, small=True, color='#99a4ac', wraplength=300, justify='left')
-            hint_label.grid(row=2, column=0, sticky='ew', pady=(7, 0))
-            section.bind('<Configure>', lambda event: hint_label.configure(wraplength=max(180, event.width-5)))
-        self.settings_controls.append((control, 'readonly'))
-        return control
+        heading = tk.Frame(section, background=WHITE)
+        heading.grid(row=0, column=0, sticky='ew')
+        icon_tile(heading, icon, accent, tint, size=30).pack(side='left', padx=(0, 12))
+        label(heading, title, bold=True).pack(side='left')
+        pill(heading, variable=badge if isinstance(badge, tk.Variable) else None,
+             text=None if isinstance(badge, tk.Variable) else badge, width=84, height=28,
+             color=badge_color, fill=badge_fill, border=badge_border).pack(side='right')
+        return section
+
+    def _setting_hint(self, parent, variable, accent):
+        row = tk.Frame(parent, background=WHITE)
+        row.grid(row=2, column=0, sticky='ew', pady=(8, 0))
+        row.columnconfigure(1, weight=1)
+        icon = tk.Canvas(row, width=15, height=18, background=WHITE, highlightthickness=0, takefocus=False)
+        icon.grid(row=0, column=0, sticky='n', padx=(0, 7))
+        draw_icon(icon, 'info', 0, 1, 15, accent)
+        hint = label(row, variable=variable, small=True, color=MUTED, wraplength=300, justify='left')
+        hint.grid(row=0, column=1, sticky='ew')
+        row.bind('<Configure>', lambda event: hint.configure(wraplength=max(160, event.width-24)))
+        card = parent.master
+        minimum = int(card.cget('height'))
+        def fit_hint(_event):
+            height = max(minimum, parent.winfo_reqheight()+2*card.inset[1])
+            if int(card.cget('height')) != height:
+                card.configure(height=height)
+        hint.bind('<Configure>', fit_hint)
 
     def sync_formats(self, *_args):
         if self._settings_guard:
             return
         formats = [f for f, v in self.format_vars.items() if v.get()]
-        mapping = {'txt': '适合直接打开、阅读和保存。',
-                   'md': '适合整理笔记，保留清晰的文字结构。',
-                   'json': '适合进一步处理聊天数据。'}
-        if len(formats) == 1:
-            hint = mapping[formats[0]]
-        else:
-            hint = '同时保存：' + '、'.join(f.upper() for f in formats) if formats else '请至少选择一种保存格式。'
+        names = {'txt': 'TXT', 'md': 'MD', 'json': 'JSON'}
+        hint = '同时保存：' + '、'.join(names[f] for f in formats) if formats else '请至少选择一种保存格式。'
         self.format_help.set(hint)
         self.update_buttons()
 
@@ -287,6 +346,9 @@ class App(tk.Tk):
         }[(self.images.get(), self.files.get())]
         self.content_choice.set(name)
         self.content_help.set(hint)
+        self.content_badge.set({(False, False): '仅文字', (True, False): '包含图片',
+                                (True, True): '完整备份', (False, True): '包含文件'}[
+                                    (self.images.get(), self.files.get())])
 
     def get_export_options(self):
         return ExportOptions(out_root=self.out.get().strip(),
@@ -322,8 +384,14 @@ class App(tk.Tk):
         self.account_btn.configure(state='disabled' if self.busy or self.detecting else 'normal',
                                    text='检测中…' if self.detecting else '重新检测' if self.source_ready else '检测微信账号')
         self.account_status.set('检测中…' if self.detecting else '已识别微信账号' if self.source_ready else '未识别微信账号')
-        self.account_status_label.configure(foreground=GREEN if self.source_ready else MUTED)
+        self.account_status_label.configure(foreground=GREEN_DARK if self.source_ready else MUTED)
         self.account_dot.configure(foreground=GREEN if self.source_ready else '#db5252')
+        badge_fill = '#ecfcf5' if self.source_ready else '#fff5f3'
+        self.account_badge.set_surface(badge_fill, '#b6efd9' if self.source_ready else '#f1d6ce')
+        self.account_dot.configure(background=badge_fill)
+        self.account_status_label.configure(background=badge_fill)
+        if hasattr(self, 'status_dot'):
+            self.status_dot.configure(foreground=GREEN if self.source_ready else '#db5252')
         self.chat_list.set_enabled(not self.busy)
         for widget, enabled_state in self.settings_controls:
             widget.configure(state='disabled' if self.busy else enabled_state)

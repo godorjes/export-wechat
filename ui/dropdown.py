@@ -7,7 +7,7 @@ import ctypes
 from ctypes import wintypes
 import os
 
-from ui.theme import WHITE, INK, MUTED, LINE, GREEN, GREEN_DARK, PALE, BODY_FONT, rounded_rect
+from ui.theme import WHITE, INK, MUTED, LINE, GREEN, GREEN_DARK, PALE, FIELD, BODY_FONT, rounded_rect
 
 
 def monitor_work_area(widget):
@@ -128,7 +128,7 @@ class Dropdown(tk.Canvas):
         disabled = self._state == 'disabled'
         focused = self.focus_get() == self or self.popup is not None
         border = LINE if disabled else GREEN if focused else '#badaca' if self._hover else LINE
-        bg = '#f6f8f9' if disabled else '#fcfefd' if self._hover else WHITE
+        bg = '#f2f5f8' if disabled else '#f5faf8' if self._hover else FIELD
         rounded_rect(self, 1, 1, w-1, h-1, 9, fill=bg, outline=border, width=1, tags='field')
         value, available = self.get(), w-48
         if self._font.measure(value) > available:

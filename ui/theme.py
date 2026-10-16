@@ -8,16 +8,17 @@ import tkinter as tk
 from tkinter import font as tkfont, ttk
 import uuid
 
-BG = '#f6f8fa'
+BG = '#eff4f8'
 WHITE = '#ffffff'
-INK = '#1c2731'
-MUTED = '#7a8692'
-LINE = '#e5eaf0'
-GREEN = '#13a565'
-GREEN_DARK = '#07854e'
-PALE = '#effaf4'
-BODY_FONT = ('Microsoft YaHei UI', 10)
-SMALL_FONT = ('Microsoft YaHei UI', 9)
+INK = '#19263d'
+MUTED = '#8a9ab0'
+LINE = '#e4ebf3'
+GREEN = '#00bd84'
+GREEN_DARK = '#078c63'
+PALE = '#ecfcf5'
+FIELD = '#f8fafc'
+BODY_FONT = ('Microsoft YaHei UI', 11)
+SMALL_FONT = ('Microsoft YaHei UI', 10)
 
 
 def configure_theme(root):
@@ -37,10 +38,10 @@ def configure_theme(root):
               selectbackground=[('readonly', WHITE)], selectforeground=[('readonly', INK)],
               foreground=[('disabled', '#a4aeb5'), ('readonly', INK)],
               background=[('active', WHITE), ('readonly', WHITE)])
-    style.configure('TEntry', padding=5, borderwidth=0, fieldbackground=WHITE,
-                    bordercolor=WHITE, lightcolor=WHITE, darkcolor=WHITE)
+    style.configure('TEntry', padding=5, borderwidth=0, fieldbackground=FIELD,
+                    bordercolor=FIELD, lightcolor=FIELD, darkcolor=FIELD)
     style.configure('Vertical.TScrollbar', gripcount=0, width=9, arrowsize=8,
-                    borderwidth=0, background='#dce3e8', troughcolor=WHITE,
+                    borderwidth=0, background='#dce5ee', troughcolor=WHITE,
                     bordercolor=WHITE, lightcolor=WHITE, darkcolor=WHITE)
     style.configure('Green.Horizontal.TProgressbar', background=GREEN, troughcolor='#e8eeea',
                     borderwidth=0, lightcolor=GREEN, darkcolor=GREEN, thickness=7)
@@ -55,13 +56,115 @@ def rounded_rect(canvas, x1, y1, x2, y2, radius=10, **kwargs):
         smooth=True, splinesteps=24, **kwargs)
 
 
+def draw_icon(canvas, kind, x, y, size=18, color=MUTED, *, tags=()):
+    def points(values):
+        return [x+value*size/24 if i % 2 == 0 else y+value*size/24 for i, value in enumerate(values)]
+    def line(*values):
+        canvas.create_line(*points(values), fill=color, width=max(1.3, size/14),
+                           capstyle='round', joinstyle='round', tags=tags)
+    def box(a, b, c, d):
+        canvas.create_rectangle(*points((a, b, c, d)), outline=color, width=max(1.3, size/14), tags=tags)
+    if kind == 'wechat':
+        for oval, tail in (((1, 2, 18, 16), (4, 13, 3, 19, 9, 15)),
+                           ((9, 9, 24, 22), (19, 20, 23, 24, 22, 17))):
+            canvas.create_oval(*points(oval), fill=color, outline='', tags=tags)
+            canvas.create_polygon(*points(tail), fill=color, outline='', tags=tags)
+        for dx, dy in ((7, 8), (12, 8), (14, 14), (19, 14)):
+            canvas.create_oval(*points((dx-1, dy-1, dx+1, dy+1)), fill=GREEN_DARK, outline='', tags=tags)
+    elif kind == 'folder':
+        line(3, 7, 3, 19, 21, 19, 21, 7, 12, 7, 10, 4, 3, 4, 3, 7)
+    elif kind == 'document':
+        line(6, 3, 14, 3, 19, 8, 19, 21, 6, 21, 6, 3)
+        line(14, 3, 14, 8, 19, 8)
+    elif kind == 'image':
+        box(3, 5, 21, 20)
+        line(4, 17, 10, 11, 14, 15, 17, 12, 21, 17)
+        canvas.create_oval(*points((15, 8, 17, 10)), fill=color, outline='', tags=tags)
+    elif kind == 'download':
+        line(12, 3, 12, 15, 8, 11)
+        line(12, 15, 16, 11)
+        line(4, 16, 4, 21, 20, 21, 20, 16)
+    elif kind == 'refresh':
+        canvas.create_arc(*points((3, 3, 21, 21)), start=30, extent=270, style='arc', outline=color,
+                          width=max(1.3, size/14), tags=tags)
+        line(19, 3, 20, 9, 14, 8)
+    elif kind in {'info', 'help'}:
+        canvas.create_oval(*points((3, 3, 21, 21)), outline=color, width=max(1.3, size/14), tags=tags)
+        if kind == 'info':
+            line(12, 11, 12, 17)
+            canvas.create_oval(*points((11, 7, 13, 9)), fill=color, outline='', tags=tags)
+        else:
+            canvas.create_text(x+size/2, y+size/2, text='?', fill=color,
+                               font=(BODY_FONT[0], max(8, int(size*.6)), 'bold'), tags=tags)
+    elif kind == 'list':
+        for dy, end in ((7, 21), (12, 21), (17, 15)):
+            line(7, dy, end, dy)
+            line(3, dy, 4, dy)
+
+
+def icon_tile(parent, kind, color, tint, size=30):
+    tile = tk.Canvas(parent, width=size, height=size, background=parent.cget('background'),
+                     highlightthickness=0, borderwidth=0, takefocus=False)
+    rounded_rect(tile, 1, 1, size-1, size-1, 9, fill=tint, outline='')
+    draw_icon(tile, kind, (size-17)/2, (size-17)/2, 17, color)
+    return tile
+
+
+def pill(parent, text=None, variable=None, *, width=86, height=30,
+         color=GREEN_DARK, fill=PALE, border='#b6efd9'):
+    badge = RoundedCard(parent, width=width, height=height, inset=(8, 4), radius=height/2,
+                        shadow=False, background=parent.cget('background'), fill=fill, border=border)
+    badge.caption = label(badge.body, text, variable, small=True, bold=True, color=color, background=fill)
+    badge.caption.configure(anchor='center')
+    badge.caption.pack(fill='both', expand=True)
+    if variable is not None:
+        font = tkfont.Font(badge, font=badge.caption.cget('font'))
+        def fit_caption(*_args):
+            badge.configure(width=max(width, font.measure(str(variable.get()))+20))
+        trace = variable.trace_add('write', fit_caption)
+        def remove_trace(event):
+            if event.widget == badge:
+                variable.trace_remove('write', trace)
+        badge.bind('<Destroy>', remove_trace, add='+')
+        fit_caption()
+    return badge
+
+
+def heading_dot(parent):
+    dot = tk.Canvas(parent, width=16, height=16, background=parent.cget('background'),
+                    highlightthickness=0, borderwidth=0, takefocus=False)
+    dot.create_oval(0, 0, 16, 16, fill='#e1faef', outline='')
+    dot.create_oval(3, 3, 13, 13, fill=GREEN, outline='')
+    return dot
+
+
+def style_native_titlebar(root):
+    """Colour the native caption where Windows supports per-window DWM colours."""
+    if os.name != 'nt':
+        return
+    try:
+        user = ctypes.WinDLL('user32')
+        user.GetParent.argtypes = [ctypes.c_void_p]
+        user.GetParent.restype = ctypes.c_void_p
+        frame = user.GetParent(root.winfo_id()) or root.winfo_id()
+        dwm = ctypes.WinDLL('dwmapi')
+        dwm.DwmSetWindowAttribute.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint]
+        dwm.DwmSetWindowAttribute.restype = ctypes.c_long
+        for attribute, rgb in ((35, 0x4F8E07), (36, 0xFFFFFF)):
+            value = ctypes.c_uint(rgb)
+            dwm.DwmSetWindowAttribute(frame, attribute, ctypes.byref(value), ctypes.sizeof(value))
+    except (AttributeError, OSError):
+        pass
+
+
 class RoundedCard(tk.Canvas):
     def __init__(self, parent, *, height=550, width=350, radius=15, inset=(2, 12),
-                 background=BG, border=LINE, shadow=True):
+                 background=BG, border=LINE, shadow=True, fill=WHITE):
         super().__init__(parent, background=background, highlightthickness=0,
-                         borderwidth=0, height=height, width=width)
+                         borderwidth=0, height=height, width=width, takefocus=False)
         self.radius, self.inset, self.border, self.shadow = radius, inset, border, shadow
-        self.body = tk.Frame(self, background=WHITE, borderwidth=0)
+        self.fill = fill
+        self.body = tk.Frame(self, background=fill, borderwidth=0)
         self.window = self.create_window(inset[0], inset[1], window=self.body, anchor='nw')
         self.bind('<Configure>', self._resize)
 
@@ -69,34 +172,42 @@ class RoundedCard(tk.Canvas):
         w, h = event.width, event.height
         self.delete('surface')
         if self.shadow:
-            rounded_rect(self, 1, 3, w-1, h-1, self.radius, fill='#eaf0ed', outline='', tags='surface')
+            rounded_rect(self, 1, 4, w-1, h-1, self.radius, fill='#e2e9f0', outline='', tags='surface')
         rounded_rect(self, 1, 1, w-2, h-3 if self.shadow else h-1, self.radius,
-                     fill=WHITE, outline=self.border, width=1, tags='surface')
+                     fill=self.fill, outline=self.border, width=1, tags=('surface', 'card_face'))
         self.tag_lower('surface')
         x, y = self.inset
         self.itemconfigure(self.window, width=max(1, w-2*x), height=max(1, h-2*y))
 
+    def set_surface(self, fill, border):
+        self.fill, self.border = fill, border
+        self.body.configure(background=fill)
+        self.itemconfigure('card_face', fill=fill, outline=border)
+
 
 def label(parent, text=None, variable=None, *, small=False, bold=False, color=INK, background=WHITE, **kw):
     return tk.Label(parent, text=text, textvariable=variable, background=background, foreground=color,
-                    font=(BODY_FONT[0], 9 if small else 10, 'bold' if bold else 'normal'),
+                    font=(BODY_FONT[0], 10 if small else 11, 'bold' if bold else 'normal'),
                     borderwidth=0, anchor='w', **kw)
 
 
 class RoundedButton(tk.Canvas):
     """Rounded surface with a real keyboard-focusable Tk button inside."""
     def __init__(self, parent, text, command=None, *, primary=False, height=40,
-                 width=None, state='normal', small=False):
-        font = (BODY_FONT[0], 9 if small else 10, 'bold' if primary else 'normal')
-        width = width or tkfont.Font(font=font).measure(text) + 32
+                 width=None, state='normal', small=False, icon=None, color=None, icon_color=None):
+        font = (BODY_FONT[0], 10 if small else 11, 'bold' if primary else 'normal')
+        width = width or tkfont.Font(font=font).measure(text) + (54 if icon else 32)
         super().__init__(parent, background=parent.cget('background'), width=width, height=height,
                          borderwidth=0, highlightthickness=0, takefocus=False)
         self.primary = primary
+        self.icon, self.text_color = icon, color
+        self.icon_color = icon_color
         self.hover = False
         self.button = tk.Button(self, text=text, command=command, font=font, relief='flat',
                                 borderwidth=0, highlightthickness=0, cursor='hand2',
                                 padx=0, pady=0, state=state, takefocus=True)
-        self.window = self.create_window(8, 5, window=self.button, anchor='nw')
+        self._label_font = tkfont.Font(self, font=font)
+        self.window = self.create_window(34 if icon else 8, 5, window=self.button, anchor='nw')
         self.bind('<Configure>', lambda _: self._draw())
         for widget in (self, self.button):
             widget.bind('<Enter>', lambda _: self._hover(True))
@@ -112,18 +223,26 @@ class RoundedButton(tk.Canvas):
 
     def _draw(self):
         disabled = str(self.button.cget('state')) == 'disabled'
-        bg = ('#cde7da' if disabled else GREEN_DARK if self.hover else GREEN) if self.primary else ('#f8fafb' if self.hover else WHITE)
-        fg = WHITE if self.primary else INK
+        bg = ('#dff3ec' if disabled else GREEN_DARK if self.hover else GREEN) if self.primary else (FIELD if self.hover else WHITE)
+        fg = WHITE if self.primary else self.text_color or INK
         border = bg if self.primary else LINE
         if self.button.focus_get() == self.button:
-            border = '#94e0b8'
+            border = '#87aaff'
         self.button.configure(background=bg, activebackground=GREEN_DARK if self.primary else '#f8fafb',
-                              foreground=fg, activeforeground=fg, disabledforeground=WHITE if self.primary else '#a4aeb5')
+                              foreground=fg, activeforeground=fg, disabledforeground='#91a5b2' if self.primary else '#a4aeb5')
         self.delete('surface')
         w, h = max(self.winfo_width(), int(self.cget('width'))), max(self.winfo_height(), int(self.cget('height')))
         rounded_rect(self, 1, 1, w-1, h-1, 9, fill=bg, outline=border, width=1, tags='surface')
+        if self.icon:
+            text_width = min(self._label_font.measure(self.button.cget('text'))+2, max(1, w-48))
+            icon_x = max(12, (w-text_width-24)/2)
+            draw_icon(self, self.icon, icon_x, (h-16)/2, 16,
+                      '#91a5b2' if disabled else self.icon_color or fg, tags='surface')
+            self.coords(self.window, icon_x+24, 5)
+            self.itemconfigure(self.window, width=text_width, height=max(1, h-10))
+        else:
+            self.itemconfigure(self.window, width=max(1, w-16), height=max(1, h-10))
         self.tag_lower('surface')
-        self.itemconfigure(self.window, width=max(1, w-16), height=max(1, h-10))
 
     def invoke(self):
         return self.button.invoke()
